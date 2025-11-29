@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V57 - NEST ASYNCIO FIX)
+📜 EVA'S THEORIE APP (V58 - FINAL DEBUG)
 -----------------------------------------------------
 Reparaties:
-- CORE FIX: 'nest_asyncio' toegepast. Dit is de 'magische patch' die
-  problemen met asyncio loops op Streamlit Cloud oplost.
-- METHODE: Terug naar de Python library (sneller dan subprocess), maar nu stabiel.
-- FAIL-SAFE: Knop + Debug balk behouden voor zekerheid.
+- FILE CHECK: Controleert of het audiobestand daadwerkelijk data bevat (>0 bytes).
+- ERROR VISUALS: Toont rode foutmeldingen direct in de app als generatie faalt.
+- ENGINE: Geforceerde synchrone uitvoering met nest_asyncio.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -29,12 +28,11 @@ import sys
 import asyncio
 from datetime import datetime, date
 
-# --- NIEUWE LIBRARY ---
-# Zorg dat 'nest_asyncio' in requirements.txt staat!
+# --- LIBRARY SETUP ---
 try:
     import nest_asyncio
     import edge_tts
-    # De magische regel die crashes voorkomt:
+    # Forceer asyncio om nested loops toe te staan (cruciaal voor Streamlit Cloud)
     nest_asyncio.apply()
     TTS_AVAILABLE = True
 except ImportError:
@@ -81,8 +79,7 @@ REWARD_GIFS = [
 
 def get_audio_player_html(speech_b64=None):
     """
-    HTML/JS audiospeler V57.
-    Strategie: Knop is standaard ZICHTBAAR. Javascript verbergt hem als autoplay lukt.
+    HTML/JS audiospeler V58.
     """
     if not speech_b64:
         return ""
@@ -217,7 +214,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 4️⃣ CACHED DATA & TTS (NEST ASYNCIO METHOD)
+# 4️⃣ CACHED DATA & TTS (V58)
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -229,52 +226,48 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
-# Helper functie voor async aanroep
-async def _edge_tts_generate(text, voice, output_file):
+# Async helper die we synchroon gaan aanroepen
+async def _generate_worker(text, voice, output_file):
     comm = edge_tts.Communicate(text, voice)
     await comm.save(output_file)
 
 @st.cache_data(show_spinner=False)
 def generate_audio_file(text, voice_key="Fenna (Vrouw - Standaard)"):
-    """
-    V57: Gebruikt nest_asyncio om veilig de Python library te gebruiken.
-    Dit is veel stabieler dan subprocess en lost de 'event loop closed' error op.
-    """
-    if not TTS_AVAILABLE or not text: 
-        if not TTS_AVAILABLE: st.error("⚠️ 'nest_asyncio' of 'edge-tts' ontbreekt in requirements.txt!")
+    if not TTS_AVAILABLE:
+        st.error("⚠️ Library 'edge-tts' of 'nest_asyncio' niet geladen.")
+        return None
+    if not text:
         return None
     
     voice = VOICE_OPTIONS.get(voice_key, "nl-NL-FennaNeural")
     
+    # Maak temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
         output_file = f.name
     
     try:
-        # Omdat nest_asyncio.apply() is aangeroepen, kunnen we dit veilig doen:
-        asyncio.run(_edge_tts_generate(text, voice, output_file))
+        # POGING 1: Directe asyncio run (mogelijk gemaakt door nest_asyncio)
+        asyncio.run(_generate_worker(text, voice, output_file))
         
+        # CONTROLE: Bestaat bestand en is het groter dan 0 bytes?
         if os.path.exists(output_file):
-            with open(output_file, "rb") as f:
-                data = f.read()
-            os.remove(output_file)
-            return base64.b64encode(data).decode()
-            
-    except Exception as e:
-        # Als asyncio.run faalt, proberen we de loop-hack als laatste redmiddel
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(_edge_tts_generate(text, voice, output_file))
-            if os.path.exists(output_file):
-                with open(output_file, "rb") as f: data = f.read()
+            size = os.path.getsize(output_file)
+            if size > 0:
+                with open(output_file, "rb") as f:
+                    data = f.read()
                 os.remove(output_file)
                 return base64.b64encode(data).decode()
-        except Exception as e2:
-            st.error(f"⚠️ Audio Fout: {str(e2)}")
-            if os.path.exists(output_file): os.remove(output_file)
+            else:
+                st.error(f"⚠️ Audiobestand is leeg (0 bytes).")
+                return None
+        else:
+            st.error("⚠️ Audiobestand kon niet worden weggeschreven.")
             return None
-    
-    return None
+            
+    except Exception as e:
+        st.error(f"⚠️ TTS Exception: {str(e)}")
+        if os.path.exists(output_file): os.remove(output_file)
+        return None
 
 # ----------------------------------------------------------------------
 # 5️⃣ OPSLAG & STATE
