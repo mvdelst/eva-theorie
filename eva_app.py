@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V69 - EXAMEN TIMER)
+📜 EVA'S THEORIE APP (V70 - ANTI-GOK RANDOMIZER)
 -----------------------------------------------------
-Nieuw in V69:
-- EXAMEN TIMER: De aftelbalk en 'wachttijd voor audio' werken nu ook in de Examen Simulatie.
-- STRENGE REGELS: In examenmodus telt een antwoord als FOUT als de tijd op is,
-  zelfs als je op de juiste knop drukte.
-- RESET: Timer reset correct tussen examenvragen.
+Nieuw in V70:
+- RANDOM BUTTONS: De antwoordknoppen worden nu bij elke vraag gehusseld.
+  Je kunt niet meer gokken op 'de middelste knop'.
+- CORE: Google TTS, Timer en Sessies blijven behouden.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -45,7 +44,7 @@ st.set_page_config(
 
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
-APP_VERSION = "V69 (Examen Timer)"
+APP_VERSION = "V70 (Random Buttons)"
 EXAM_PASS_SCORE = 18
 
 REWARD_GIFS = [
@@ -428,34 +427,38 @@ def screen_practice(df):
             if audio_bytes:
                 st.audio(audio_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
-        for opt in [row['opt1'], row['opt2'], row['opt3']]:
-            if str(opt).lower() != 'nan':
-                if st.button(str(opt), key=f"btn_{current_id}_{opt}"):
-                    elapsed_total = time.time() - st.session_state.question_start_time
-                    thinking_time = elapsed_total - audio_delay
-                    is_too_late = thinking_time > timer_seconds
-                    
-                    st.session_state.answered_question = True
-                    st.session_state.selected_answer = str(opt)
-                    st.session_state.is_too_late = is_too_late 
-                    
-                    data = st.session_state.user_data
-                    is_correct_answer = (str(opt) == str(row['answer']))
-                    
-                    if is_correct_answer and not is_too_late:
-                        data['total_score'] += 1
-                        st.session_state.streak += 1
-                        st.session_state.current_session_score += 1
-                        st.session_state.trigger_balloons = True
-                        if is_mistakes and str(current_id) in data['mistakes_list']: 
-                            data['mistakes_list'].remove(str(current_id))
-                    else:
-                        st.session_state.streak = 0
-                        if str(current_id) not in data['mistakes_list']: 
-                            data['mistakes_list'].append(str(current_id))
-                    
-                    save_history(data)
-                    st.rerun()
+        # BUTTONS SHUFFLE (V70 Feature integrated here)
+        options = [row['opt1'], row['opt2'], row['opt3']]
+        valid_opts = [str(o) for o in options if str(o).lower() != 'nan']
+        random.shuffle(valid_opts)
+
+        for opt in valid_opts:
+            if st.button(str(opt), key=f"btn_{current_id}_{opt}"):
+                elapsed_total = time.time() - st.session_state.question_start_time
+                thinking_time = elapsed_total - audio_delay
+                is_too_late = thinking_time > timer_seconds
+                
+                st.session_state.answered_question = True
+                st.session_state.selected_answer = str(opt)
+                st.session_state.is_too_late = is_too_late 
+                
+                data = st.session_state.user_data
+                is_correct_answer = (str(opt) == str(row['answer']))
+                
+                if is_correct_answer and not is_too_late:
+                    data['total_score'] += 1
+                    st.session_state.streak += 1
+                    st.session_state.current_session_score += 1
+                    st.session_state.trigger_balloons = True
+                    if is_mistakes and str(current_id) in data['mistakes_list']: 
+                        data['mistakes_list'].remove(str(current_id))
+                else:
+                    st.session_state.streak = 0
+                    if str(current_id) not in data['mistakes_list']: 
+                        data['mistakes_list'].append(str(current_id))
+                
+                save_history(data)
+                st.rerun()
     else:
         is_correct_answer = (st.session_state.selected_answer == str(row['answer']))
         is_too_late = st.session_state.is_too_late
@@ -528,7 +531,6 @@ def screen_exam(df):
     qid = est['ids'][est['idx']]
     row = df[df['id'] == str(qid)].iloc[0]
     
-    # 1. Audio & Timing
     question_text = make_question_audio(row)
     
     if st.session_state.question_start_time == 0:
@@ -543,11 +545,9 @@ def screen_exam(df):
     
     audio_delay = st.session_state.audio_duration_cache
 
-    # UI Header
     st.markdown(f"**Examen Vraag {est['idx']+1}/{len(est['ids'])}**")
     st.progress((est['idx']) / len(est['ids']))
     
-    # TIMER BALK (In examen is dit altijd zichtbaar, geen pauze voor feedback)
     st.markdown(get_timer_html(timer_seconds, audio_delay), unsafe_allow_html=True)
 
     img_prompt = urllib.parse.quote(row.get('image_desc', 'traffic situation car netherlands'))
@@ -561,27 +561,26 @@ def screen_exam(df):
         if audio_ex_bytes:
             st.audio(audio_ex_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
-    for opt in [row['opt1'], row['opt2'], row['opt3']]:
-        if str(opt).lower() != 'nan':
-            if st.button(str(opt), key=f"ex_{qid}_{opt}"):
-                # Check timing
-                elapsed_total = time.time() - st.session_state.question_start_time
-                thinking_time = elapsed_total - audio_delay
-                is_too_late = thinking_time > timer_seconds
-                
-                # Check antwoord
-                is_correct_choice = (str(opt) == str(row['answer']))
-                
-                # Examen logica: Het is ALLEEN goed als het antwoord klopt EN je op tijd was.
-                final_result = is_correct_choice and not is_too_late
-                
-                st.session_state.exam_state['answers'][qid] = final_result
-                
-                # Reset voor volgende vraag
-                st.session_state.question_start_time = 0
-                st.session_state.audio_duration_cache = 0
-                st.session_state.exam_state['idx'] += 1
-                st.rerun()
+    # BUTTONS SHUFFLE VOOR EXAMEN
+    options = [row['opt1'], row['opt2'], row['opt3']]
+    valid_opts = [str(o) for o in options if str(o).lower() != 'nan']
+    random.shuffle(valid_opts)
+
+    for opt in valid_opts:
+        if st.button(str(opt), key=f"ex_{qid}_{opt}"):
+            elapsed_total = time.time() - st.session_state.question_start_time
+            thinking_time = elapsed_total - audio_delay
+            is_too_late = thinking_time > timer_seconds
+            
+            is_correct_choice = (str(opt) == str(row['answer']))
+            final_result = is_correct_choice and not is_too_late
+            
+            st.session_state.exam_state['answers'][qid] = final_result
+            
+            st.session_state.question_start_time = 0
+            st.session_state.audio_duration_cache = 0
+            st.session_state.exam_state['idx'] += 1
+            st.rerun()
 
 def screen_exam_result(df):
     ans = st.session_state.exam_state['answers']
