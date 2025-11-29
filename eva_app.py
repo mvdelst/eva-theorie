@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V55 - SUBPROCESS STABILITY)
+📜 EVA'S THEORIE APP (V56 - PATH FIX)
 -----------------------------------------------------
 Reparaties:
-- CORE AUDIO FIX: We gebruiken nu 'subprocess' in plaats van asyncio.
-  Dit roept edge-tts aan via de command-line, wat conflicten met
-  Streamlit's event loops voorkomt. Dit is de meest stabiele methode voor Cloud.
-- DEBUG: De zwarte balk blijft zichtbaar om te testen.
+- PATH FIX: We roepen edge-tts nu aan via 'python -m edge_tts' in plaats van
+  alleen 'edge-tts'. Dit lost het probleem op dat de server het commando niet kan vinden.
+- ERROR LOGGING: Als het nu mislukt, zie je de ECHTE foutmelding in beeld (niet alleen in de console).
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -26,7 +25,7 @@ import tempfile
 import re
 import urllib.parse
 import sys
-import subprocess # <--- Nieuw: Voor stabiele executie
+import subprocess
 from datetime import datetime, date
 
 # ----------------------------------------------------------------------
@@ -64,7 +63,6 @@ REWARD_GIFS = [
     "https://media.giphy.com/media/d31w24pskko8663a/giphy.gif"    
 ]
 
-# Check of edge-tts command beschikbaar is (zou altijd True moeten zijn na installatie)
 TTS_AVAILABLE = True 
 
 # ----------------------------------------------------------------------
@@ -73,7 +71,7 @@ TTS_AVAILABLE = True
 
 def get_audio_player_html(speech_b64=None):
     """
-    HTML/JS audiospeler V55.
+    HTML/JS audiospeler V56.
     Strategie: Knop is standaard ZICHTBAAR. Javascript verbergt hem als autoplay lukt.
     """
     if not speech_b64:
@@ -125,46 +123,34 @@ def get_audio_player_html(speech_b64=None):
     var status = document.getElementById('status_{uid}');
     var vol = {user_vol};
 
-    // iOS Audio Unlock Functie
     window.forcePlay_{uid} = function() {{
         btn.innerHTML = "Laden...";
-        
-        // Context unlock poging
         var AudioContext = window.AudioContext || window.webkitAudioContext;
         if (AudioContext) {{
             var ctx = new AudioContext();
             ctx.resume();
         }}
-
         playSequence(true);
     }};
 
     function playSequence(isManual) {{
-        // Logica voor afspelen
         if(music) {{
             music.volume = vol;
             var p = music.play();
-            if(p !== undefined) {{
-                p.catch(e => {{ console.log("Music auto-block"); }});
-            }}
+            if(p !== undefined) {{ p.catch(e => {{}}); }}
         }}
 
         if(speech) {{
-            if(music) music.volume = 0.05; // Ducking
-            
+            if(music) music.volume = 0.05; 
             setTimeout(function() {{
                 speech.volume = 1.0;
                 var p2 = speech.play();
-                
                 if (p2 !== undefined) {{
                     p2.then(_ => {{
-                        // SUCCES: Verberg knop
                         btn.style.display = 'none'; 
                         status.innerHTML = "Audio speelt...";
-                        
                         speech.onended = function() {{
                             if(music) {{
-                                // Fade in music
                                 var fadeIn = setInterval(function() {{
                                     if (music.volume < vol) {{ music.volume += 0.05; }} 
                                     else {{ music.volume = vol; clearInterval(fadeIn); }}
@@ -173,8 +159,6 @@ def get_audio_player_html(speech_b64=None):
                             status.innerHTML = "";
                         }};
                     }}).catch(error => {{
-                        // FAAL: Toon knop (of houd hem zichtbaar)
-                        console.log("Autoplay blocked");
                         if(!isManual) {{
                             btn.style.display = 'inline-block';
                             status.innerHTML = "Tik op de knop (iOS)";
@@ -184,10 +168,7 @@ def get_audio_player_html(speech_b64=None):
             }}, 300);
         }}
     }}
-
-    // Probeer direct te starten
     playSequence(false);
-
 }})();
 </script>
 """
@@ -226,7 +207,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 4️⃣ CACHED DATA & TTS (SUBPROCESS METHOD)
+# 4️⃣ CACHED DATA & TTS (PATH FIX METHOD)
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -241,37 +222,35 @@ def load_data():
 @st.cache_data(show_spinner=False)
 def generate_audio_file(text, voice_key="Fenna (Vrouw - Standaard)"):
     """
-    Genereert audio via de command-line interface van edge-tts.
-    Dit is VEEL stabieler op Streamlit Cloud dan de Python library methode.
+    V56: Gebruikt sys.executable om edge-tts module direct aan te roepen.
+    Dit voorkomt 'command not found' errors op servers.
     """
     if not text: return None
     
     voice = VOICE_OPTIONS.get(voice_key, "nl-NL-FennaNeural")
     
-    # Tijdelijk bestand voor output
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
         output_file = f.name
     
     try:
-        # We roepen edge-tts aan als een extern programma
-        # Dit omzeilt alle asyncio/event-loop problemen in Streamlit
-        command = ["edge-tts", "--text", text, "--write-media", output_file, "--voice", voice]
+        # HIER IS DE FIX: We gebruiken 'python -m edge_tts'
+        # sys.executable is het pad naar de huidige python (bijv. /usr/bin/python3)
+        command = [sys.executable, "-m", "edge_tts", "--text", text, "--write-media", output_file, "--voice", voice]
         
-        # Voer commando uit, wacht max 10 seconden
         result = subprocess.run(command, capture_output=True, text=True, timeout=10)
         
         if result.returncode == 0 and os.path.exists(output_file):
-            # Succes! Lees bestand
             with open(output_file, "rb") as f:
                 data = f.read()
             os.remove(output_file)
             return base64.b64encode(data).decode()
         else:
-            print(f"TTS Error (CMD): {result.stderr}")
+            # Als het faalt, tonen we de ECHTE foutmelding in de app (handig voor debug)
+            st.error(f"⚠️ Audio Server Fout: {result.stderr}")
             return None
             
     except Exception as e:
-        print(f"TTS Exception: {str(e)}")
+        st.error(f"⚠️ Audio Python Fout: {str(e)}")
         if os.path.exists(output_file): os.remove(output_file)
         return None
     
@@ -521,17 +500,10 @@ def screen_practice(df):
 
     if not st.session_state.answered_question:
         with audio_slot:
-            # 1. Genereer de audio één keer
             audio_data_b64 = generate_audio_file(make_question_audio(row), st.session_state.voice_question)
-            
-            # 2. De mooie speler
             components.html(get_audio_player_html(audio_data_b64), height=70)
-            
-            # 3. DEBUG: De standaard zwarte speler (Zodat we zeker weten of de file er is)
             if audio_data_b64:
                 st.audio(base64.b64decode(audio_data_b64), format='audio/mp3')
-            else:
-                st.error("Audio generatie mislukt op server.")
 
         for opt in [row['opt1'], row['opt2'], row['opt3']]:
             if str(opt).lower() != 'nan':
@@ -550,7 +522,6 @@ def screen_practice(df):
         is_correct = (st.session_state.selected_answer == str(row['answer']))
         fb_txt = get_dad_feedback(is_correct, row['explanation'])
         with audio_slot:
-            # Ook hier de debug speler toevoegen voor de feedback
             audio_fb_b64 = generate_audio_file(fb_txt, st.session_state.voice_feedback)
             components.html(get_audio_player_html(audio_fb_b64), height=70)
             if audio_fb_b64:
@@ -589,7 +560,6 @@ def screen_exam(df):
     st.markdown(f"<div class='question-content'>{row['question']}</div>", unsafe_allow_html=True)
     
     with st.empty():
-        # Debug ook in Examen
         audio_ex_b64 = generate_audio_file(clean_text_for_speech(row['question']), st.session_state.voice_question)
         components.html(get_audio_player_html(audio_ex_b64), height=70)
         if audio_ex_b64:
