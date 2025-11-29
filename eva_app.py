@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V53 - IOS AUDIO RECOVERY)
+📜 EVA'S THEORIE APP (V54 - DEBUG AUDIO EDITIE)
 -----------------------------------------------------
 Reparaties:
-- FAIL-SAFE AUDIO: Knop is standaard zichtbaar, verdwijnt alleen als autoplay lukt.
-- VISUALS: Audio speler heeft nu minimale hoogte zodat knoppen zichtbaar blijven.
-- ENGINE: Asyncio loop check toegevoegd voor stabiliteit van de stemgeneratie.
+- DEBUG MODUS: Extra standaard 'st.audio' speler toegevoegd.
+  Dit forceert de browser om het geluidsbestand te laten zien,
+  zodat we zeker weten dat de server het bestand heeft gemaakt.
+- CORE: Asyncio fix en iOS fail-safe behouden.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -77,7 +78,7 @@ except ImportError:
 
 def get_audio_player_html(speech_b64=None):
     """
-    HTML/JS audiospeler V53.
+    HTML/JS audiospeler V54.
     Strategie: Knop is standaard ZICHTBAAR. Javascript verbergt hem als autoplay lukt.
     """
     if not speech_b64:
@@ -524,8 +525,18 @@ def screen_practice(df):
 
     if not st.session_state.answered_question:
         with audio_slot:
-            # Voldoende hoogte voor de knop
-            components.html(get_audio_player_html(generate_audio_file(make_question_audio(row), st.session_state.voice_question)), height=70)
+            # 1. Genereer de audio één keer
+            audio_data_b64 = generate_audio_file(make_question_audio(row), st.session_state.voice_question)
+            
+            # 2. De mooie speler
+            components.html(get_audio_player_html(audio_data_b64), height=70)
+            
+            # 3. DEBUG: De standaard zwarte speler (Zodat we zeker weten of de file er is)
+            if audio_data_b64:
+                st.audio(base64.b64decode(audio_data_b64), format='audio/mp3')
+            else:
+                st.error("Audio generatie mislukt op server.")
+
         for opt in [row['opt1'], row['opt2'], row['opt3']]:
             if str(opt).lower() != 'nan':
                 if st.button(str(opt), key=f"btn_{current_id}_{opt}"):
@@ -543,7 +554,12 @@ def screen_practice(df):
         is_correct = (st.session_state.selected_answer == str(row['answer']))
         fb_txt = get_dad_feedback(is_correct, row['explanation'])
         with audio_slot:
-            components.html(get_audio_player_html(generate_audio_file(fb_txt, st.session_state.voice_feedback)), height=70)
+            # Ook hier de debug speler toevoegen voor de feedback
+            audio_fb_b64 = generate_audio_file(fb_txt, st.session_state.voice_feedback)
+            components.html(get_audio_player_html(audio_fb_b64), height=70)
+            if audio_fb_b64:
+                st.audio(base64.b64decode(audio_fb_b64), format='audio/mp3')
+
         if is_correct:
             st.success(f"✅ {fb_txt}")
             if st.session_state.streak > 0 and st.session_state.streak % 5 == 0:
@@ -577,7 +593,11 @@ def screen_exam(df):
     st.markdown(f"<div class='question-content'>{row['question']}</div>", unsafe_allow_html=True)
     
     with st.empty():
-        components.html(get_audio_player_html(generate_audio_file(clean_text_for_speech(row['question']), st.session_state.voice_question)), height=70)
+        # Debug ook in Examen
+        audio_ex_b64 = generate_audio_file(clean_text_for_speech(row['question']), st.session_state.voice_question)
+        components.html(get_audio_player_html(audio_ex_b64), height=70)
+        if audio_ex_b64:
+            st.audio(base64.b64decode(audio_ex_b64), format='audio/mp3')
 
     for opt in [row['opt1'], row['opt2'], row['opt3']]:
         if str(opt).lower() != 'nan':
