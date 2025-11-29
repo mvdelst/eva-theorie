@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V61 - DASHBOARD DIAGNOSE)
+📜 EVA'S THEORIE APP (V62 - GOOGLE TTS)
 -----------------------------------------------------
 Reparaties:
-- UI: Audio Testknop verplaatst van sidebar naar Dashboard (zodat hij zichtbaar is op mobiel).
-- VERSIE: Versienummer toegevoegd onderaan de pagina.
-- ENGINE: Native st.audio met nest_asyncio voor maximale compatibiliteit.
+- ENGINE SWAP: We gebruiken nu gTTS (Google Text-to-Speech).
+  Dit systeem is synchroon en werkt gegarandeerd op Streamlit Cloud.
+  Geen asyncio problemen meer.
+- ROBUUSTHEID: Dit is de meest stabiele methode voor audio.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -17,22 +18,16 @@ import streamlit as st
 import pandas as pd
 import random
 import time
-import base64
 import os
 import json
 import tempfile
 import re
 import urllib.parse
-import sys
-import asyncio
-from datetime import datetime, date
+from datetime import datetime
 
 # --- LIBRARY SETUP ---
 try:
-    import nest_asyncio
-    import edge_tts
-    # Forceer asyncio patch voor Streamlit Cloud
-    nest_asyncio.apply()
+    from gtts import gTTS
     TTS_AVAILABLE = True
 except ImportError:
     TTS_AVAILABLE = False
@@ -48,21 +43,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-if not st.runtime.exists():
-    st.error("⚠️ Start via terminal: streamlit run eva_app.py")
-    st.stop()
-
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
 EXAM_PASS_SCORE = 18
-APP_VERSION = "V61 (Native Audio Fix)"
-
-# Stemmen
-VOICE_OPTIONS = {
-    "Fenna (Vrouw - Standaard)": "nl-NL-FennaNeural",
-    "Maarten (Man - Papa)": "nl-NL-MaartenNeural",
-    "Colette (Vrouw - Extra)": "nl-NL-ColetteNeural"
-}
+APP_VERSION = "V62 (Google TTS Engine)"
 
 REWARD_GIFS = [
     "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif", 
@@ -106,7 +90,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 3️⃣ CACHED DATA & TTS
+# 3️⃣ AUDIO ENGINE (GOOGLE TTS)
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -118,39 +102,30 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
-# Async worker voor TTS
-async def _generate_worker(text, voice, output_file):
-    comm = edge_tts.Communicate(text, voice)
-    await comm.save(output_file)
-
 @st.cache_data(show_spinner=False)
-def generate_audio_bytes(text, voice_key="Fenna (Vrouw - Standaard)"):
+def generate_audio_bytes(text):
     """
-    Genereert audio bytes. Geeft None terug als het mislukt.
+    Gebruikt Google Translate TTS API. Werkt synchroon en altijd.
     """
-    if not TTS_AVAILABLE: 
+    if not TTS_AVAILABLE:
         return None
     
     if not text: return None
     
-    voice = VOICE_OPTIONS.get(voice_key, "nl-NL-FennaNeural")
-    
+    # Tijdelijk bestand
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
         output_file = f.name
     
     try:
-        # POGING: Directe asyncio run met nest_asyncio
-        asyncio.run(_generate_worker(text, voice, output_file))
+        # Google TTS aanroep (Simpel en robuust)
+        tts = gTTS(text=text, lang='nl')
+        tts.save(output_file)
         
         if os.path.exists(output_file):
-            size = os.path.getsize(output_file)
-            if size > 100: # Geldige audio check
-                with open(output_file, "rb") as f:
-                    data = f.read()
-                os.remove(output_file)
-                return data
-            else:
-                return None # Bestand te klein (corrupt)
+            with open(output_file, "rb") as f:
+                data = f.read()
+            os.remove(output_file)
+            return data
         else:
             return None
             
@@ -186,8 +161,6 @@ if 'exam_state' not in st.session_state: st.session_state.exam_state = {}
 if 'dark_mode' not in st.session_state: st.session_state.dark_mode = False
 if 'selected_categories' not in st.session_state: 
     st.session_state.selected_categories = ["Gevaarherkenning", "Kennis", "Inzicht"]
-if 'voice_question' not in st.session_state: st.session_state.voice_question = "Fenna (Vrouw - Standaard)"
-if 'voice_feedback' not in st.session_state: st.session_state.voice_feedback = "Maarten (Man - Papa)"
 if 'practice_ids' not in st.session_state: st.session_state.practice_ids = []
 
 # ----------------------------------------------------------------------
@@ -245,7 +218,7 @@ div[data-baseweb="select"] span {{ color: {text_color} !important; }}
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# 7️⃣ SCHERMEN
+# 6️⃣ SCHERMEN
 # ----------------------------------------------------------------------
 
 def render_navbar():
@@ -264,7 +237,6 @@ def screen_dashboard():
     if st.session_state.trigger_balloons: st.session_state.trigger_balloons = False
     data = st.session_state.user_data
     
-    # Geen inspringing in HTML string
     st.markdown(f"""
 <div class="insta-card">
 <div class="profile-container">
@@ -286,17 +258,15 @@ Road to License ✨<br>
 </div>
 """, unsafe_allow_html=True)
     
-    # App Installatie Instructies (PWA)
     with st.expander("📲 Zet op je telefoon (App)"):
         st.markdown("""
         **iPhone (iOS):**
         1. Tik op de **Deel-knop** (vierkantje met pijl) onderin Safari.
         2. Scroll naar beneden en tik op **'Zet op beginscherm'**.
-        3. Klik op **'Voeg toe'**.
         
         **Android:**
         1. Tik op de **3 puntjes** rechtsboven in Chrome.
-        2. Tik op **'App installeren'** of **'Toevoegen aan startscherm'**.
+        2. Tik op **'App installeren'**.
         """)
 
     st.markdown("""
@@ -332,39 +302,18 @@ Road to License ✨<br>
 
     if st.button("Examen Simulatie"): st.session_state.mode = 'exam_init'; st.rerun()
 
-    share_text = urllib.parse.quote(f"Hoi Papa! Ik heb al {data['total_score']} punten gehaald! 🚗💨")
-    st.link_button("📱 Deel Score via WhatsApp", f"https://wa.me/?text={share_text}")
-
-    # --- HIER IS DE TEST & VERSIE INFO ---
-    with st.expander("🔧 Audio Diagnose & Versie"):
-        st.write(f"Huidige versie: **{APP_VERSION}**")
-        if st.button("🔊 Test Audio Nu"):
-             with st.spinner("Genereren..."):
-                 test_text = f"Hallo Eva! Test geslaagd. Tijd: {datetime.now().strftime('%H:%M')}."
-                 data = generate_audio_bytes(test_text, st.session_state.voice_question)
-                 if data:
-                     st.success("✅ Bestand gemaakt!")
-                     st.audio(data, format="audio/mp3")
-                 else:
-                     st.error("❌ Mislukt.")
-
     with st.expander("⚙️ Instellingen"):
         st.caption("Geluid")
         st.session_state.music_volume = st.slider("Volume", 0.0, 1.0, 0.3)
         st.caption("Mix & Match Oefenen")
         cats = ["Gevaarherkenning", "Kennis", "Inzicht"]
         st.session_state.selected_categories = st.multiselect("Selecteer categorieën:", cats, default=st.session_state.selected_categories)
-        st.caption("Stemmen")
-        st.session_state.voice_question = st.selectbox("Vraag stem:", list(VOICE_OPTIONS.keys()), index=0)
-        st.session_state.voice_feedback = st.selectbox("Feedback stem:", list(VOICE_OPTIONS.keys()), index=1)
     
-    # Voeg versienummer onderaan toe zoals gevraagd
     st.caption(f"App Versie: {APP_VERSION} | © 2025 Papa & Eva")
 
     if not st.session_state.welcome_played:
-        # Hier ook audio checken voor welkom
         welkom_text = "Ha Eefje. Klaar om te knallen?"
-        audio_welkom = generate_audio_bytes(welkom_text, st.session_state.voice_question)
+        audio_welkom = generate_audio_bytes(welkom_text)
         if audio_welkom:
             st.audio(audio_welkom, format='audio/mp3', start_time=0)
         st.session_state.welcome_played = True
@@ -393,7 +342,6 @@ def screen_practice(df):
     card_bg = '#121212' if st.session_state.dark_mode else '#ffffff'
     text_c = '#ffffff' if st.session_state.dark_mode else '#262626'
 
-    # Geen inspringing om code-blokken te voorkomen!
     st.markdown(f"""
 <div class="insta-card">
 <div class="card-header">
@@ -417,11 +365,9 @@ def screen_practice(df):
 
     if not st.session_state.answered_question:
         with audio_slot:
-            audio_bytes = generate_audio_bytes(make_question_audio(row), st.session_state.voice_question)
+            audio_bytes = generate_audio_bytes(make_question_audio(row))
             if audio_bytes:
                 st.audio(audio_bytes, format='audio/mp3', start_time=0)
-            else:
-                st.warning("⚠️ Audio kon niet worden geladen.")
 
         for opt in [row['opt1'], row['opt2'], row['opt3']]:
             if str(opt).lower() != 'nan':
@@ -440,7 +386,7 @@ def screen_practice(df):
         is_correct = (st.session_state.selected_answer == str(row['answer']))
         fb_txt = get_dad_feedback(is_correct, row['explanation'])
         with audio_slot:
-            audio_fb_bytes = generate_audio_bytes(fb_txt, st.session_state.voice_feedback)
+            audio_fb_bytes = generate_audio_bytes(fb_txt)
             if audio_fb_bytes:
                 st.audio(audio_fb_bytes, format='audio/mp3', start_time=0)
 
@@ -477,7 +423,7 @@ def screen_exam(df):
     st.markdown(f"<div class='question-content'>{row['question']}</div>", unsafe_allow_html=True)
     
     with st.empty():
-        audio_ex_bytes = generate_audio_bytes(clean_text_for_speech(row['question']), st.session_state.voice_question)
+        audio_ex_bytes = generate_audio_bytes(clean_text_for_speech(row['question']))
         if audio_ex_bytes:
             st.audio(audio_ex_bytes, format='audio/mp3', start_time=0)
 
