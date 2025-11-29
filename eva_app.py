@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V68 - SMART TIMING)
+📜 EVA'S THEORIE APP (V69 - EXAMEN TIMER)
 -----------------------------------------------------
-Nieuw in V68:
-- EERLIJKE START: De timer (blauwe balk) begint pas te lopen NADAT de vraag is uitgesproken.
-- AUDIO DELAY: We berekenen hoe lang de zin duurt en zetten een 'animation-delay' op de balk.
-- BACKEND SYNC: De 'Te Laat' check houdt nu ook rekening met de spreektijd.
+Nieuw in V69:
+- EXAMEN TIMER: De aftelbalk en 'wachttijd voor audio' werken nu ook in de Examen Simulatie.
+- STRENGE REGELS: In examenmodus telt een antwoord als FOUT als de tijd op is,
+  zelfs als je op de juiste knop drukte.
+- RESET: Timer reset correct tussen examenvragen.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -44,7 +45,7 @@ st.set_page_config(
 
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
-APP_VERSION = "V68 (Smart Audio Timer)"
+APP_VERSION = "V69 (Examen Timer)"
 EXAM_PASS_SCORE = 18
 
 REWARD_GIFS = [
@@ -73,12 +74,10 @@ def clean_text_for_speech(text):
 
 def estimate_speech_duration(text):
     """
-    Schatting: Een gemiddelde stem spreekt ongeveer 2.5 woorden per seconde.
-    We voegen 1 seconde buffer toe voor het laden.
+    Schatting: 0.45 sec per woord + buffer.
     """
     if not text: return 0
     words = len(text.split())
-    # 0.45 sec per woord is een goed gemiddelde voor rustige spraak
     duration = (words * 0.45) + 1.5 
     return round(duration, 1)
 
@@ -172,7 +171,7 @@ if 'audio_duration_cache' not in st.session_state: st.session_state.audio_durati
 if 'is_too_late' not in st.session_state: st.session_state.is_too_late = False
 
 # ----------------------------------------------------------------------
-# 5️⃣ UI & CSS (INCL. SMART TIMER)
+# 5️⃣ UI & CSS (TIMER)
 # ----------------------------------------------------------------------
 
 def inject_custom_css():
@@ -216,7 +215,6 @@ div.stButton > button:active {{ transform: scale(0.98); background: #efefef !imp
 .logo-font {{ font-family: 'Grand Hotel', cursive; font-size: 28px; color: {text_color}; text-align: center; }}
 .reward-overlay {{ text-align: center; margin: 20px 0; padding: 15px; background: {btn_bg}; border-radius: 8px; border: 2px solid #e1306c; animation: bounceIn 0.8s; }}
 @keyframes bounceIn {{ 0% {{transform: scale(0.3);}} 50% {{transform: scale(1.05);}} 100% {{transform: scale(1);}} }}
-/* TIMER BAR CSS */
 .timer-container {{ width: 100%; background-color: #e0e0e0; border-radius: 4px; height: 10px; margin-bottom: 10px; overflow: hidden; }}
 .timer-bar {{ height: 100%; background-color: #0095f6; width: 100%; transform-origin: left; }}
 .stExpander p, .stExpander label, .stExpander span, .stExpander div {{ color: {text_color} !important; }}
@@ -241,10 +239,6 @@ def render_navbar():
             st.rerun()
 
 def get_timer_html(seconds, delay_seconds):
-    """
-    Genereert de HTML voor de aftelbalk met een wacht-tijd (delay).
-    De animatie begint pas na 'delay_seconds'.
-    """
     return f"""
     <div class="timer-container">
         <div class="timer-bar" style="animation: countdown {seconds}s linear forwards; animation-delay: {delay_seconds}s;"></div>
@@ -325,7 +319,7 @@ Road to License ✨<br>
             st.session_state.current_index = 0
             st.session_state.answered_question = False
             st.session_state.question_start_time = 0
-            st.session_state.audio_duration_cache = 0 # Reset audio cache
+            st.session_state.audio_duration_cache = 0
             st.rerun()
         else:
             st.error("Geen vragen gevonden!")
@@ -334,7 +328,10 @@ Road to License ✨<br>
     if st.button("Foutenbak Herkans"):
         st.session_state.mode = 'mistakes'; st.session_state.current_index = 0; st.session_state.answered_question = False; st.rerun()
 
-    if st.button("Examen Simulatie"): st.session_state.mode = 'exam_init'; st.rerun()
+    if st.button("Examen Simulatie"): 
+        st.session_state.mode = 'exam_init'
+        st.session_state.question_start_time = 0 # Reset timer voor examen start
+        st.rerun()
 
     with st.expander("⚙️ Instellingen"):
         st.caption("Geluid")
@@ -376,16 +373,13 @@ def screen_practice(df):
     current_id = practice_list[st.session_state.current_index]
     row = df[df['id'] == str(current_id)].iloc[0]
     
-    # 1. Bepaal tekst voor audio en bereken duur
     question_text = make_question_audio(row)
     
-    # 2. Bereken/Haal audio duur op (als we dat nog niet gedaan hadden voor deze vraag)
     if not st.session_state.answered_question and st.session_state.question_start_time == 0:
         duration = estimate_speech_duration(question_text)
         st.session_state.audio_duration_cache = duration
         st.session_state.question_start_time = time.time()
 
-    # 3. Timer instellingen
     try:
         timer_seconds = int(row.get('timer', 15))
     except:
@@ -393,18 +387,14 @@ def screen_practice(df):
     
     audio_delay = st.session_state.audio_duration_cache
 
-    # Progress bar voor sessie
     total_q = len(practice_list)
     curr_q = st.session_state.current_index + 1
     progress = curr_q / total_q
     st.markdown(f"**Vraag {curr_q} van {total_q}**")
     st.progress(progress)
 
-    # --- HIER IS DE BLAUWE BALK MET VERTRAGING ---
     if not st.session_state.answered_question:
-        # We geven de audio_delay mee aan de HTML
         st.markdown(get_timer_html(timer_seconds, audio_delay), unsafe_allow_html=True)
-    # ------------------------------
 
     img_prompt = urllib.parse.quote(row.get('image_desc', 'traffic situation car netherlands'))
     ai_img_url = f"https://image.pollinations.ai/prompt/driver%20view%20inside%20car%20{img_prompt}?width=600&height=400&nologo=true"
@@ -441,14 +431,8 @@ def screen_practice(df):
         for opt in [row['opt1'], row['opt2'], row['opt3']]:
             if str(opt).lower() != 'nan':
                 if st.button(str(opt), key=f"btn_{current_id}_{opt}"):
-                    # Check de tijd!
-                    # Tijd die voorbij is sinds renderen
                     elapsed_total = time.time() - st.session_state.question_start_time
-                    # De "denktijd" is de totale tijd MIN de tijd dat de audio sprak
                     thinking_time = elapsed_total - audio_delay
-                    
-                    # Als thinking_time < 0 is, betekent dat dat ze antwoordde TERWIJL de audio nog sprak
-                    # Dat is natuurlijk prima en telt niet als te laat.
                     is_too_late = thinking_time > timer_seconds
                     
                     st.session_state.answered_question = True
@@ -456,7 +440,6 @@ def screen_practice(df):
                     st.session_state.is_too_late = is_too_late 
                     
                     data = st.session_state.user_data
-                    
                     is_correct_answer = (str(opt) == str(row['answer']))
                     
                     if is_correct_answer and not is_too_late:
@@ -474,10 +457,8 @@ def screen_practice(df):
                     save_history(data)
                     st.rerun()
     else:
-        # RESULTAAT FASE
         is_correct_answer = (st.session_state.selected_answer == str(row['answer']))
         is_too_late = st.session_state.is_too_late
-        
         fb_txt = get_dad_feedback(is_correct_answer, row['explanation'], is_too_late)
         
         with audio_slot:
@@ -547,8 +528,28 @@ def screen_exam(df):
     qid = est['ids'][est['idx']]
     row = df[df['id'] == str(qid)].iloc[0]
     
+    # 1. Audio & Timing
+    question_text = make_question_audio(row)
+    
+    if st.session_state.question_start_time == 0:
+        duration = estimate_speech_duration(question_text)
+        st.session_state.audio_duration_cache = duration
+        st.session_state.question_start_time = time.time()
+
+    try:
+        timer_seconds = int(row.get('timer', 15))
+    except:
+        timer_seconds = 15
+    
+    audio_delay = st.session_state.audio_duration_cache
+
+    # UI Header
     st.markdown(f"**Examen Vraag {est['idx']+1}/{len(est['ids'])}**")
-    st.progress(est['idx'] / len(est['ids']))
+    st.progress((est['idx']) / len(est['ids']))
+    
+    # TIMER BALK (In examen is dit altijd zichtbaar, geen pauze voor feedback)
+    st.markdown(get_timer_html(timer_seconds, audio_delay), unsafe_allow_html=True)
+
     img_prompt = urllib.parse.quote(row.get('image_desc', 'traffic situation car netherlands'))
     ai_img_url = f"https://image.pollinations.ai/prompt/driver%20view%20inside%20car%20{img_prompt}?width=600&height=400&nologo=true"
     st.image(ai_img_url, use_container_width=True)
@@ -556,14 +557,29 @@ def screen_exam(df):
     st.markdown(f"<div class='question-content'>{row['question']}</div>", unsafe_allow_html=True)
     
     with st.empty():
-        audio_ex_bytes = generate_audio_bytes(clean_text_for_speech(row['question']))
+        audio_ex_bytes = generate_audio_bytes(question_text)
         if audio_ex_bytes:
             st.audio(audio_ex_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
     for opt in [row['opt1'], row['opt2'], row['opt3']]:
         if str(opt).lower() != 'nan':
             if st.button(str(opt), key=f"ex_{qid}_{opt}"):
-                st.session_state.exam_state['answers'][qid] = (str(opt) == str(row['answer']))
+                # Check timing
+                elapsed_total = time.time() - st.session_state.question_start_time
+                thinking_time = elapsed_total - audio_delay
+                is_too_late = thinking_time > timer_seconds
+                
+                # Check antwoord
+                is_correct_choice = (str(opt) == str(row['answer']))
+                
+                # Examen logica: Het is ALLEEN goed als het antwoord klopt EN je op tijd was.
+                final_result = is_correct_choice and not is_too_late
+                
+                st.session_state.exam_state['answers'][qid] = final_result
+                
+                # Reset voor volgende vraag
+                st.session_state.question_start_time = 0
+                st.session_state.audio_duration_cache = 0
                 st.session_state.exam_state['idx'] += 1
                 st.rerun()
 
