@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V60 - SYSTEM CHECK)
+📜 EVA'S THEORIE APP (V61 - DASHBOARD DIAGNOSE)
 -----------------------------------------------------
 Reparaties:
-- SYSTEM CHECK: Een knop in de zijbalk om de audio direct te testen.
-- DEBUG INFO: Toont exact hoeveel bytes het audiobestand is.
-  (Als dit getal laag is, bijv < 1000, is het bestand corrupt).
-- NATIVE PLAYER: Gebruikt de standaard browser speler.
+- UI: Audio Testknop verplaatst van sidebar naar Dashboard (zodat hij zichtbaar is op mobiel).
+- VERSIE: Versienummer toegevoegd onderaan de pagina.
+- ENGINE: Native st.audio met nest_asyncio voor maximale compatibiliteit.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -32,7 +31,7 @@ from datetime import datetime, date
 try:
     import nest_asyncio
     import edge_tts
-    # Forceer asyncio patch
+    # Forceer asyncio patch voor Streamlit Cloud
     nest_asyncio.apply()
     TTS_AVAILABLE = True
 except ImportError:
@@ -56,6 +55,7 @@ if not st.runtime.exists():
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
 EXAM_PASS_SCORE = 18
+APP_VERSION = "V61 (Native Audio Fix)"
 
 # Stemmen
 VOICE_OPTIONS = {
@@ -106,7 +106,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 3️⃣ CACHED DATA & TTS (DIAGNOSTIC MODE)
+# 3️⃣ CACHED DATA & TTS
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -118,7 +118,7 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
-# Async worker
+# Async worker voor TTS
 async def _generate_worker(text, voice, output_file):
     comm = edge_tts.Communicate(text, voice)
     await comm.save(output_file)
@@ -139,11 +139,12 @@ def generate_audio_bytes(text, voice_key="Fenna (Vrouw - Standaard)"):
         output_file = f.name
     
     try:
+        # POGING: Directe asyncio run met nest_asyncio
         asyncio.run(_generate_worker(text, voice, output_file))
         
         if os.path.exists(output_file):
             size = os.path.getsize(output_file)
-            if size > 100: # Een bestand kleiner dan 100 bytes is zeker geen audio
+            if size > 100: # Geldige audio check
                 with open(output_file, "rb") as f:
                     data = f.read()
                 os.remove(output_file)
@@ -247,22 +248,6 @@ div[data-baseweb="select"] span {{ color: {text_color} !important; }}
 # 7️⃣ SCHERMEN
 # ----------------------------------------------------------------------
 
-def render_sidebar():
-    with st.sidebar:
-        st.header("🔧 Systeem Diagnose")
-        if st.button("🔊 Test Audio Systeem"):
-            with st.spinner("Test audio genereren..."):
-                # Test audio met huidige tijd om caching te voorkomen
-                test_text = f"Hallo Eva, dit is een testbericht om te kijken of het geluid werkt. Het is nu {datetime.now().strftime('%H:%M')}."
-                data = generate_audio_bytes(test_text, st.session_state.voice_question)
-                
-                if data:
-                    st.success(f"✅ Audio gegenereerd!")
-                    st.info(f"Bestandsgrootte: {len(data)} bytes")
-                    st.audio(data, format='audio/mp3', start_time=0)
-                else:
-                    st.error("❌ Audio generatie mislukt. Check logs.")
-
 def render_navbar():
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
@@ -350,6 +335,19 @@ Road to License ✨<br>
     share_text = urllib.parse.quote(f"Hoi Papa! Ik heb al {data['total_score']} punten gehaald! 🚗💨")
     st.link_button("📱 Deel Score via WhatsApp", f"https://wa.me/?text={share_text}")
 
+    # --- HIER IS DE TEST & VERSIE INFO ---
+    with st.expander("🔧 Audio Diagnose & Versie"):
+        st.write(f"Huidige versie: **{APP_VERSION}**")
+        if st.button("🔊 Test Audio Nu"):
+             with st.spinner("Genereren..."):
+                 test_text = f"Hallo Eva! Test geslaagd. Tijd: {datetime.now().strftime('%H:%M')}."
+                 data = generate_audio_bytes(test_text, st.session_state.voice_question)
+                 if data:
+                     st.success("✅ Bestand gemaakt!")
+                     st.audio(data, format="audio/mp3")
+                 else:
+                     st.error("❌ Mislukt.")
+
     with st.expander("⚙️ Instellingen"):
         st.caption("Geluid")
         st.session_state.music_volume = st.slider("Volume", 0.0, 1.0, 0.3)
@@ -359,6 +357,9 @@ Road to License ✨<br>
         st.caption("Stemmen")
         st.session_state.voice_question = st.selectbox("Vraag stem:", list(VOICE_OPTIONS.keys()), index=0)
         st.session_state.voice_feedback = st.selectbox("Feedback stem:", list(VOICE_OPTIONS.keys()), index=1)
+    
+    # Voeg versienummer onderaan toe zoals gevraagd
+    st.caption(f"App Versie: {APP_VERSION} | © 2025 Papa & Eva")
 
     if not st.session_state.welcome_played:
         # Hier ook audio checken voor welkom
@@ -509,7 +510,6 @@ def screen_panic():
 
 def main():
     inject_custom_css()
-    render_sidebar() # <--- HIER ZIT DE DIAGNOSE KNOP
     df = load_data()
     if df.empty: st.error("❌ 'vragen.csv' niet gevonden!"); return
     render_navbar()
