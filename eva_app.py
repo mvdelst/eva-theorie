@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V66 - SESSIES & BELONINGEN)
+📜 EVA'S THEORIE APP (V67 - CBR TIMER)
 -----------------------------------------------------
-Nieuw in V66:
-- SESSIE LENGTE: Kies vooraf hoeveel vragen je wilt doen (5, 10, 20 of Alles).
-- VOORTGANG: Een balkje laat zien hoe ver je bent in je sessie.
-- BELONINGEN: Werken nog steeds! Bij elke 5 goede antwoorden op rij (streak) komt er een GIF.
-- EINDSCORE: Na de sessie zie je direct je resultaat.
+Nieuw in V67:
+- CBR TIMER: Een blauwe balk die afloopt (CSS animatie).
+- TIJDSLIMIETEN: 8 seconden voor Gevaarherkenning, 15 voor de rest.
+- TE LAAT LOGICA: Antwoorden na de tijdslimiet tellen als fout.
+- FUNCTIONALITEIT: Audio, Beloningen en Sessies blijven werken.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -45,7 +45,7 @@ st.set_page_config(
 
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
-APP_VERSION = "V66 (Sessies & Beloningen)"
+APP_VERSION = "V67 (CBR Timer)"
 EXAM_PASS_SCORE = 18
 
 REWARD_GIFS = [
@@ -72,8 +72,12 @@ def clean_text_for_speech(text):
     clean = re.sub(r'\bC\b', 'optie C', clean)
     return clean.strip()
 
-def get_dad_feedback(is_correct, explanation):
+def get_dad_feedback(is_correct, explanation, is_too_late=False):
     explanation = clean_text_for_speech(explanation)
+    
+    if is_too_late:
+        return f"Te laat! Je moet sneller beslissen Eef. In het verkeer telt elke seconde. {explanation}"
+
     if is_correct:
         intros = ["Kijk, dat is mijn dochter! Goed.", "Lekker bezig Eef!", "Hoppa! In the pocket.", "Zie je wel dat je het kan? 😉", "De poesjes zijn trots!", "Gas erop Eef, dit is goed!", "Keurig."]
         return f"{random.choice(intros)} {explanation}"
@@ -90,7 +94,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 3️⃣ AUDIO ENGINE (GOOGLE TTS)
+# 3️⃣ AUDIO ENGINE
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -137,7 +141,6 @@ def save_history(data):
     try: json.dump(data, open(HISTORY_FILE, 'w'))
     except: pass
 
-# Init Session State
 if 'user_data' not in st.session_state: st.session_state.user_data = load_history()
 if 'mode' not in st.session_state: st.session_state.mode = 'dashboard'
 if 'streak' not in st.session_state: st.session_state.streak = st.session_state.user_data.get('streak', 0)
@@ -151,16 +154,14 @@ if 'exam_state' not in st.session_state: st.session_state.exam_state = {}
 if 'dark_mode' not in st.session_state: st.session_state.dark_mode = False
 if 'selected_categories' not in st.session_state: 
     st.session_state.selected_categories = ["Gevaarherkenning", "Kennis", "Inzicht"]
-if 'voice_question' not in st.session_state: st.session_state.voice_question = "Fenna (Vrouw - Standaard)"
-if 'voice_feedback' not in st.session_state: st.session_state.voice_feedback = "Maarten (Man - Papa)"
 if 'practice_ids' not in st.session_state: st.session_state.practice_ids = []
-
-# Nieuwe variabelen voor sessie beheer
 if 'session_limit_setting' not in st.session_state: st.session_state.session_limit_setting = "10"
 if 'current_session_score' not in st.session_state: st.session_state.current_session_score = 0
+if 'question_start_time' not in st.session_state: st.session_state.question_start_time = 0
+if 'is_too_late' not in st.session_state: st.session_state.is_too_late = False
 
 # ----------------------------------------------------------------------
-# 5️⃣ UI & CSS
+# 5️⃣ UI & CSS (INCL. TIMER ANIMATION)
 # ----------------------------------------------------------------------
 
 def inject_custom_css():
@@ -184,9 +185,6 @@ def inject_custom_css():
 .avatar-small {{ width: 32px; height: 32px; border-radius: 50%; margin-right: 10px; background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); padding: 2px; }}
 .avatar-small img {{ border-radius: 50%; border: 2px solid {card_bg}; width: 100%; height: 100%; object-fit: cover; }}
 .question-content {{ font-size: 22px !important; font-weight: 700 !important; color: {text_color} !important; margin-bottom: 10px; line-height: 1.4; display: block !important; opacity: 1 !important; text-align: left; }}
-.question-label {{ font-size: 12px !important; color: #8e8e8e; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; display: block !important; }}
-h1, h2, h3, p, label, span, div {{ color: {text_color}; }}
-div.stButton {{ width: 100% !important; padding: 0 !important; }}
 div.stButton > button {{ width: 100% !important; display: block !important; border-radius: 8px !important; background: {btn_bg} !important; border: 1px solid {card_border} !important; color: {text_color} !important; font-weight: 600 !important; padding: 16px 0px !important; margin-bottom: 8px !important; text-align: center !important; font-size: 16px !important; min-height: 54px !important; white-space: normal !important; box-shadow: none !important; transition: all 0.1s !important; }}
 div.stButton > button:hover {{ background: {btn_hover} !important; border-color: #a8a8a8 !important; }}
 div.stButton > button:active {{ transform: scale(0.98); background: #efefef !important; }}
@@ -199,7 +197,6 @@ div.stButton > button:active {{ transform: scale(0.98); background: #efefef !imp
 .stat-val {{ font-weight: 700; font-size: 18px; color: {text_color}; display: block; }}
 .stat-lbl {{ font-size: 14px; color: {text_color}; }}
 .profile-bio {{ padding: 10px 20px 20px 20px; font-size: 14px; color: {text_color}; line-height: 1.4; }}
-.bio-name {{ font-weight: 700; }}
 .highlights-scroll {{ display: flex; gap: 15px; padding: 0 20px 10px 20px; overflow-x: auto; scrollbar-width: none; }}
 .highlight-item {{ text-align: center; width: 64px; flex-shrink: 0; }}
 .highlight-circle {{ width: 62px; height: 62px; border-radius: 50%; border: 1px solid {card_border}; display: flex; align-items: center; justify-content: center; font-size: 24px; background: {btn_bg}; margin: 0 auto 5px auto; }}
@@ -208,6 +205,9 @@ div.stButton > button:active {{ transform: scale(0.98); background: #efefef !imp
 .logo-font {{ font-family: 'Grand Hotel', cursive; font-size: 28px; color: {text_color}; text-align: center; }}
 .reward-overlay {{ text-align: center; margin: 20px 0; padding: 15px; background: {btn_bg}; border-radius: 8px; border: 2px solid #e1306c; animation: bounceIn 0.8s; }}
 @keyframes bounceIn {{ 0% {{transform: scale(0.3);}} 50% {{transform: scale(1.05);}} 100% {{transform: scale(1);}} }}
+/* TIMER BAR CSS */
+.timer-container {{ width: 100%; background-color: #e0e0e0; border-radius: 4px; height: 10px; margin-bottom: 10px; overflow: hidden; }}
+.timer-bar {{ height: 100%; background-color: #0095f6; width: 100%; transform-origin: left; }}
 .stExpander p, .stExpander label, .stExpander span, .stExpander div {{ color: {text_color} !important; }}
 div[data-baseweb="select"] span {{ color: {text_color} !important; }}
 </style>
@@ -228,6 +228,21 @@ def render_navbar():
         if st.button(icon, key="dark_toggle"):
             st.session_state.dark_mode = not st.session_state.dark_mode
             st.rerun()
+
+def get_timer_html(seconds):
+    """Genereert de HTML voor de aftelbalk."""
+    # We gebruiken een keyframe animatie die precies 'seconds' duurt
+    return f"""
+    <div class="timer-container">
+        <div class="timer-bar" style="animation: countdown {seconds}s linear forwards;"></div>
+    </div>
+    <style>
+    @keyframes countdown {{
+        from {{ transform: scaleX(1); }}
+        to {{ transform: scaleX(0); }}
+    }}
+    </style>
+    """
 
 def screen_dashboard():
     if st.session_state.trigger_balloons: st.session_state.trigger_balloons = False
@@ -259,7 +274,6 @@ Road to License ✨<br>
         **iPhone (iOS):**
         1. Tik op de **Deel-knop** (vierkantje met pijl) onderin Safari.
         2. Scroll naar beneden en tik op **'Zet op beginscherm'**.
-        
         **Android:**
         1. Tik op de **3 puntjes** rechtsboven in Chrome.
         2. Tik op **'App installeren'**.
@@ -276,7 +290,6 @@ Road to License ✨<br>
 
     st.write("---") 
     
-    # --- SESSIE KIEZER ---
     st.caption("Hoeveel vragen wil je oefenen?")
     session_choice = st.select_slider("", options=["5", "10", "20", "Alles"], value=st.session_state.session_limit_setting)
     st.session_state.session_limit_setting = session_choice
@@ -291,17 +304,15 @@ Road to License ✨<br>
         if not filtered_df.empty:
             ids = filtered_df['id'].tolist()
             random.shuffle(ids)
-            
-            # Limiet toepassen op de lijst met IDs
             if session_choice != "Alles":
-                limit = int(session_choice)
-                ids = ids[:limit]
-            
+                ids = ids[:int(session_choice)]
             st.session_state.practice_ids = ids
             st.session_state.current_session_score = 0
             st.session_state.mode = 'practice'
             st.session_state.current_index = 0
             st.session_state.answered_question = False
+            # Reset timer start bij start sessie (wordt gezet per vraag)
+            st.session_state.question_start_time = 0
             st.rerun()
         else:
             st.error("Geen vragen gevonden!")
@@ -318,7 +329,6 @@ Road to License ✨<br>
         st.caption("Mix & Match Oefenen")
         cats = ["Gevaarherkenning", "Kennis", "Inzicht"]
         st.session_state.selected_categories = st.multiselect("Selecteer categorieën:", cats, default=st.session_state.selected_categories)
-        # Diagnosetest
         if st.button("🔊 Test Audio"):
              data = generate_audio_bytes("Test 1 2 3.")
              if data: st.audio(data, format="audio/mp3")
@@ -337,10 +347,8 @@ def screen_practice(df):
     if st.session_state.trigger_balloons: st.balloons(); st.session_state.trigger_balloons = False
     is_mistakes = (st.session_state.mode == 'mistakes')
     
-    # ID Lijst ophalen
     if is_mistakes:
         q_ids = st.session_state.user_data['mistakes_list']
-        # Filter ongeldige IDs eruit
         valid_q_ids = [qid for qid in q_ids if not df[df['id'] == str(qid)].empty]
         if not valid_q_ids: 
             st.success("Foutenbak leeg! 🎉"); st.button("Terug", on_click=lambda: setattr(st.session_state, 'mode', 'dashboard')); return
@@ -348,22 +356,34 @@ def screen_practice(df):
     else:
         practice_list = st.session_state.practice_ids
 
-    # Check of we klaar zijn
     if st.session_state.current_index >= len(practice_list):
-        # Sessie is klaar, toon resultaat
         screen_session_done(len(practice_list))
         return
 
     current_id = practice_list[st.session_state.current_index]
     row = df[df['id'] == str(current_id)].iloc[0]
     
-    # Voortgangsbalk en teller
+    # Bepaal timer (8s voor gevaar, 15s voor rest)
+    try:
+        timer_seconds = int(row.get('timer', 15))
+    except:
+        timer_seconds = 15
+
+    # Start tijd zetten als de vraag nieuw is
+    if not st.session_state.answered_question and st.session_state.question_start_time == 0:
+        st.session_state.question_start_time = time.time()
+
+    # Progress bar voor sessie
     total_q = len(practice_list)
     curr_q = st.session_state.current_index + 1
     progress = curr_q / total_q
-    
     st.markdown(f"**Vraag {curr_q} van {total_q}**")
     st.progress(progress)
+
+    # --- HIER IS DE BLAUWE BALK ---
+    if not st.session_state.answered_question:
+        st.markdown(get_timer_html(timer_seconds), unsafe_allow_html=True)
+    # ------------------------------
 
     img_prompt = urllib.parse.quote(row.get('image_desc', 'traffic situation car netherlands'))
     ai_img_url = f"https://image.pollinations.ai/prompt/driver%20view%20inside%20car%20{img_prompt}?width=600&height=400&nologo=true"
@@ -375,7 +395,7 @@ def screen_practice(df):
 <div class="card-header">
 <div class="avatar-small"><img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Papa"></div>
 <div style="font-weight:600; font-size:14px; color:{text_c};">Papa & Fenna</div>
-<div style="margin-left:auto; color:#8e8e8e; font-size:12px;">{row['category']}</div>
+<div style="margin-left:auto; color:#8e8e8e; font-size:12px;">{row['category']} - ⏱️ {timer_seconds}s</div>
 </div>
 <img src="{ai_img_url}" style="width:100%; display:block; min-height:200px; background-color: #eee;">
 <div style="padding:16px;">
@@ -400,12 +420,21 @@ def screen_practice(df):
         for opt in [row['opt1'], row['opt2'], row['opt3']]:
             if str(opt).lower() != 'nan':
                 if st.button(str(opt), key=f"btn_{current_id}_{opt}"):
+                    # Check de tijd!
+                    elapsed = time.time() - st.session_state.question_start_time
+                    is_too_late = elapsed > timer_seconds
+                    
                     st.session_state.answered_question = True
                     st.session_state.selected_answer = str(opt)
+                    st.session_state.is_too_late = is_too_late # Opslaan voor feedback
+                    
                     data = st.session_state.user_data
                     
-                    if str(opt) == str(row['answer']):
-                        # GOED ANTWOORD
+                    # Logic: Goed = Goed Antwoord EN Binnen de tijd
+                    is_correct_answer = (str(opt) == str(row['answer']))
+                    
+                    if is_correct_answer and not is_too_late:
+                        # ECHT GOED
                         data['total_score'] += 1
                         st.session_state.streak += 1
                         st.session_state.current_session_score += 1
@@ -413,7 +442,7 @@ def screen_practice(df):
                         if is_mistakes and str(current_id) in data['mistakes_list']: 
                             data['mistakes_list'].remove(str(current_id))
                     else:
-                        # FOUT ANTWOORD
+                        # FOUT (Of te laat)
                         st.session_state.streak = 0
                         if str(current_id) not in data['mistakes_list']: 
                             data['mistakes_list'].append(str(current_id))
@@ -421,35 +450,42 @@ def screen_practice(df):
                     save_history(data)
                     st.rerun()
     else:
-        is_correct = (st.session_state.selected_answer == str(row['answer']))
-        fb_txt = get_dad_feedback(is_correct, row['explanation'])
+        # RESULTAAT FASE
+        is_correct_answer = (st.session_state.selected_answer == str(row['answer']))
+        is_too_late = st.session_state.is_too_late
+        
+        # Feedback ophalen (Papa zegt nu ook als je te laat bent)
+        fb_txt = get_dad_feedback(is_correct_answer, row['explanation'], is_too_late)
+        
         with audio_slot:
             audio_fb_bytes = generate_audio_bytes(fb_txt)
             if audio_fb_bytes:
                 st.audio(audio_fb_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
-        if is_correct:
+        if is_too_late:
+            st.error(f"⏰ TE LAAT! {fb_txt}")
+            st.info(f"Antwoord: {row['answer']}")
+        elif is_correct_answer:
             st.success(f"✅ {fb_txt}")
-            # --- BELONING SYSTEEM ---
             if st.session_state.streak > 0 and st.session_state.streak % 5 == 0:
                 st.markdown(f"<div class='reward-overlay'><h2>🔥 {st.session_state.streak} OP EEN RIJ!</h2><img src='{random.choice(REWARD_GIFS)}' width='100%'></div>", unsafe_allow_html=True)
                 st.balloons()
         else:
-            st.error(f"❌ {fb_txt}"); st.info(f"Antwoord: {row['answer']}")
+            st.error(f"❌ {fb_txt}")
+            st.info(f"Antwoord: {row['answer']}")
         
         st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
         if st.button("Volgende ➡️"):
             st.session_state.answered_question = False
-            # Als we in de foutenbak modus zitten en het was goed, is de vraag nu weg uit de lijst
-            # Dus we hoeven de index niet te verhogen als de lijst korter is geworden
-            # Tenzij het antwoord fout was, dan blijft hij staan.
-            # Simpelste logica: Altijd volgende index in gewone modus.
+            st.session_state.question_start_time = 0 # Reset timer voor volgende vraag
+            st.session_state.is_too_late = False
+            
             if not is_mistakes:
                 st.session_state.current_index += 1
             else:
                 # In foutenbak: als goed, is item weg, dus index wijst al naar volgende.
                 # Als fout, item blijft, dus index verhogen om volgende te pakken.
-                if not is_correct:
+                if not (is_correct_answer and not is_too_late):
                     st.session_state.current_index += 1
                     
             st.rerun()
