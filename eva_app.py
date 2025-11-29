@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V56 - PATH FIX)
+📜 EVA'S THEORIE APP (V57 - NEST ASYNCIO FIX)
 -----------------------------------------------------
 Reparaties:
-- PATH FIX: We roepen edge-tts nu aan via 'python -m edge_tts' in plaats van
-  alleen 'edge-tts'. Dit lost het probleem op dat de server het commando niet kan vinden.
-- ERROR LOGGING: Als het nu mislukt, zie je de ECHTE foutmelding in beeld (niet alleen in de console).
+- CORE FIX: 'nest_asyncio' toegepast. Dit is de 'magische patch' die
+  problemen met asyncio loops op Streamlit Cloud oplost.
+- METHODE: Terug naar de Python library (sneller dan subprocess), maar nu stabiel.
+- FAIL-SAFE: Knop + Debug balk behouden voor zekerheid.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -25,8 +26,19 @@ import tempfile
 import re
 import urllib.parse
 import sys
-import subprocess
+import asyncio
 from datetime import datetime, date
+
+# --- NIEUWE LIBRARY ---
+# Zorg dat 'nest_asyncio' in requirements.txt staat!
+try:
+    import nest_asyncio
+    import edge_tts
+    # De magische regel die crashes voorkomt:
+    nest_asyncio.apply()
+    TTS_AVAILABLE = True
+except ImportError:
+    TTS_AVAILABLE = False
 
 # ----------------------------------------------------------------------
 # 1️⃣ CONFIGURATIE
@@ -63,15 +75,13 @@ REWARD_GIFS = [
     "https://media.giphy.com/media/d31w24pskko8663a/giphy.gif"    
 ]
 
-TTS_AVAILABLE = True 
-
 # ----------------------------------------------------------------------
 # 2️⃣ AUDIO ENGINE (FAIL-SAFE)
 # ----------------------------------------------------------------------
 
 def get_audio_player_html(speech_b64=None):
     """
-    HTML/JS audiospeler V56.
+    HTML/JS audiospeler V57.
     Strategie: Knop is standaard ZICHTBAAR. Javascript verbergt hem als autoplay lukt.
     """
     if not speech_b64:
@@ -207,7 +217,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 4️⃣ CACHED DATA & TTS (PATH FIX METHOD)
+# 4️⃣ CACHED DATA & TTS (NEST ASYNCIO METHOD)
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -219,13 +229,20 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
+# Helper functie voor async aanroep
+async def _edge_tts_generate(text, voice, output_file):
+    comm = edge_tts.Communicate(text, voice)
+    await comm.save(output_file)
+
 @st.cache_data(show_spinner=False)
 def generate_audio_file(text, voice_key="Fenna (Vrouw - Standaard)"):
     """
-    V56: Gebruikt sys.executable om edge-tts module direct aan te roepen.
-    Dit voorkomt 'command not found' errors op servers.
+    V57: Gebruikt nest_asyncio om veilig de Python library te gebruiken.
+    Dit is veel stabieler dan subprocess en lost de 'event loop closed' error op.
     """
-    if not text: return None
+    if not TTS_AVAILABLE or not text: 
+        if not TTS_AVAILABLE: st.error("⚠️ 'nest_asyncio' of 'edge-tts' ontbreekt in requirements.txt!")
+        return None
     
     voice = VOICE_OPTIONS.get(voice_key, "nl-NL-FennaNeural")
     
@@ -233,26 +250,29 @@ def generate_audio_file(text, voice_key="Fenna (Vrouw - Standaard)"):
         output_file = f.name
     
     try:
-        # HIER IS DE FIX: We gebruiken 'python -m edge_tts'
-        # sys.executable is het pad naar de huidige python (bijv. /usr/bin/python3)
-        command = [sys.executable, "-m", "edge_tts", "--text", text, "--write-media", output_file, "--voice", voice]
+        # Omdat nest_asyncio.apply() is aangeroepen, kunnen we dit veilig doen:
+        asyncio.run(_edge_tts_generate(text, voice, output_file))
         
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
-        
-        if result.returncode == 0 and os.path.exists(output_file):
+        if os.path.exists(output_file):
             with open(output_file, "rb") as f:
                 data = f.read()
             os.remove(output_file)
             return base64.b64encode(data).decode()
-        else:
-            # Als het faalt, tonen we de ECHTE foutmelding in de app (handig voor debug)
-            st.error(f"⚠️ Audio Server Fout: {result.stderr}")
-            return None
             
     except Exception as e:
-        st.error(f"⚠️ Audio Python Fout: {str(e)}")
-        if os.path.exists(output_file): os.remove(output_file)
-        return None
+        # Als asyncio.run faalt, proberen we de loop-hack als laatste redmiddel
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_edge_tts_generate(text, voice, output_file))
+            if os.path.exists(output_file):
+                with open(output_file, "rb") as f: data = f.read()
+                os.remove(output_file)
+                return base64.b64encode(data).decode()
+        except Exception as e2:
+            st.error(f"⚠️ Audio Fout: {str(e2)}")
+            if os.path.exists(output_file): os.remove(output_file)
+            return None
     
     return None
 
