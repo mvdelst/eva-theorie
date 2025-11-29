@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V54 - DEBUG AUDIO EDITIE)
+📜 EVA'S THEORIE APP (V55 - SUBPROCESS STABILITY)
 -----------------------------------------------------
 Reparaties:
-- DEBUG MODUS: Extra standaard 'st.audio' speler toegevoegd.
-  Dit forceert de browser om het geluidsbestand te laten zien,
-  zodat we zeker weten dat de server het bestand heeft gemaakt.
-- CORE: Asyncio fix en iOS fail-safe behouden.
+- CORE AUDIO FIX: We gebruiken nu 'subprocess' in plaats van asyncio.
+  Dit roept edge-tts aan via de command-line, wat conflicten met
+  Streamlit's event loops voorkomt. Dit is de meest stabiele methode voor Cloud.
+- DEBUG: De zwarte balk blijft zichtbaar om te testen.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -19,7 +19,6 @@ import streamlit.components.v1 as components
 import pandas as pd
 import random
 import time
-import asyncio
 import base64
 import os
 import json
@@ -27,6 +26,7 @@ import tempfile
 import re
 import urllib.parse
 import sys
+import subprocess # <--- Nieuw: Voor stabiele executie
 from datetime import datetime, date
 
 # ----------------------------------------------------------------------
@@ -64,13 +64,8 @@ REWARD_GIFS = [
     "https://media.giphy.com/media/d31w24pskko8663a/giphy.gif"    
 ]
 
-try:
-    import edge_tts
-    TTS_AVAILABLE = True
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-except ImportError:
-    TTS_AVAILABLE = False
+# Check of edge-tts command beschikbaar is (zou altijd True moeten zijn na installatie)
+TTS_AVAILABLE = True 
 
 # ----------------------------------------------------------------------
 # 2️⃣ AUDIO ENGINE (FAIL-SAFE)
@@ -78,7 +73,7 @@ except ImportError:
 
 def get_audio_player_html(speech_b64=None):
     """
-    HTML/JS audiospeler V54.
+    HTML/JS audiospeler V55.
     Strategie: Knop is standaard ZICHTBAAR. Javascript verbergt hem als autoplay lukt.
     """
     if not speech_b64:
@@ -231,7 +226,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 4️⃣ CACHED DATA & TTS
+# 4️⃣ CACHED DATA & TTS (SUBPROCESS METHOD)
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -245,40 +240,41 @@ def load_data():
 
 @st.cache_data(show_spinner=False)
 def generate_audio_file(text, voice_key="Fenna (Vrouw - Standaard)"):
-    if not TTS_AVAILABLE or not text: return None
+    """
+    Genereert audio via de command-line interface van edge-tts.
+    Dit is VEEL stabieler op Streamlit Cloud dan de Python library methode.
+    """
+    if not text: return None
+    
     voice = VOICE_OPTIONS.get(voice_key, "nl-NL-FennaNeural")
+    
+    # Tijdelijk bestand voor output
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+        output_file = f.name
+    
     try:
-        # Veilige loop creatie voor Streamlit environment
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        async def _gen():
-            comm = edge_tts.Communicate(text, voice)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
-                fname = f.name
-            await comm.save(fname)
-            return fname
-
-        # Als loop al draait (Streamlit quirks), gebruik run_until_complete voorzichtig
-        if loop.is_running():
-            # Dit is lastig in Streamlit, we proberen een nieuwe thread of pure blocking hack
-            # Voor nu: Simpele new loop is meestal veiliger in top-level caching
-            new_loop = asyncio.new_event_loop()
-            path = new_loop.run_until_complete(_gen())
-            new_loop.close()
-        else:
-            path = loop.run_until_complete(_gen())
-            
-        if path and os.path.exists(path):
-            with open(path, "rb") as f: data = f.read()
-            os.remove(path)
+        # We roepen edge-tts aan als een extern programma
+        # Dit omzeilt alle asyncio/event-loop problemen in Streamlit
+        command = ["edge-tts", "--text", text, "--write-media", output_file, "--voice", voice]
+        
+        # Voer commando uit, wacht max 10 seconden
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0 and os.path.exists(output_file):
+            # Succes! Lees bestand
+            with open(output_file, "rb") as f:
+                data = f.read()
+            os.remove(output_file)
             return base64.b64encode(data).decode()
+        else:
+            print(f"TTS Error (CMD): {result.stderr}")
+            return None
+            
     except Exception as e:
-        print(f"TTS Error: {e}") # Print naar console voor debug
+        print(f"TTS Exception: {str(e)}")
+        if os.path.exists(output_file): os.remove(output_file)
         return None
+    
     return None
 
 # ----------------------------------------------------------------------
