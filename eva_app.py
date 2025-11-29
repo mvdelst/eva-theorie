@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V58 - FINAL DEBUG)
+📜 EVA'S THEORIE APP (V60 - SYSTEM CHECK)
 -----------------------------------------------------
 Reparaties:
-- FILE CHECK: Controleert of het audiobestand daadwerkelijk data bevat (>0 bytes).
-- ERROR VISUALS: Toont rode foutmeldingen direct in de app als generatie faalt.
-- ENGINE: Geforceerde synchrone uitvoering met nest_asyncio.
+- SYSTEM CHECK: Een knop in de zijbalk om de audio direct te testen.
+- DEBUG INFO: Toont exact hoeveel bytes het audiobestand is.
+  (Als dit getal laag is, bijv < 1000, is het bestand corrupt).
+- NATIVE PLAYER: Gebruikt de standaard browser speler.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import random
 import time
@@ -32,7 +32,7 @@ from datetime import datetime, date
 try:
     import nest_asyncio
     import edge_tts
-    # Forceer asyncio om nested loops toe te staan (cruciaal voor Streamlit Cloud)
+    # Forceer asyncio patch
     nest_asyncio.apply()
     TTS_AVAILABLE = True
 except ImportError:
@@ -74,115 +74,7 @@ REWARD_GIFS = [
 ]
 
 # ----------------------------------------------------------------------
-# 2️⃣ AUDIO ENGINE (FAIL-SAFE)
-# ----------------------------------------------------------------------
-
-def get_audio_player_html(speech_b64=None):
-    """
-    HTML/JS audiospeler V58.
-    """
-    if not speech_b64:
-        return ""
-
-    music_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
-    speech_src = f"data:audio/mp3;base64,{speech_b64}"
-    user_vol = st.session_state.music_volume
-    uid = f"player_{random.randint(10000, 99999)}"
-
-    # Styles
-    btn_style = """
-        display: inline-block; 
-        margin: 5px auto; 
-        background: #0095f6; 
-        color: white; 
-        border: none; 
-        padding: 8px 16px; 
-        border-radius: 20px; 
-        font-family: sans-serif; 
-        font-weight: bold; 
-        font-size: 14px;
-        cursor: pointer;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    """
-
-    html = f"""
-<div id="wrapper_{uid}" style="text-align:center; padding: 5px;">
-    
-    <audio id="music_{uid}" loop crossorigin="anonymous" playsinline preload="auto" style="display:none;">
-        <source src="{music_url}" type="audio/mp3">
-    </audio>
-    <audio id="speech_{uid}" playsinline preload="auto" style="width: 200px; height: 30px; display:none;">
-        <source src="{speech_src}" type="audio/mp3">
-    </audio>
-
-    <button id="btn_{uid}" onclick="forcePlay_{uid}()" style="{btn_style}">
-        🔊 Tik voor geluid
-    </button>
-    <div id="status_{uid}" style="font-size:10px; color:#888; margin-top:2px;"></div>
-
-</div>
-
-<script>
-(function() {{
-    var music = document.getElementById('music_{uid}');
-    var speech = document.getElementById('speech_{uid}');
-    var btn = document.getElementById('btn_{uid}');
-    var status = document.getElementById('status_{uid}');
-    var vol = {user_vol};
-
-    window.forcePlay_{uid} = function() {{
-        btn.innerHTML = "Laden...";
-        var AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {{
-            var ctx = new AudioContext();
-            ctx.resume();
-        }}
-        playSequence(true);
-    }};
-
-    function playSequence(isManual) {{
-        if(music) {{
-            music.volume = vol;
-            var p = music.play();
-            if(p !== undefined) {{ p.catch(e => {{}}); }}
-        }}
-
-        if(speech) {{
-            if(music) music.volume = 0.05; 
-            setTimeout(function() {{
-                speech.volume = 1.0;
-                var p2 = speech.play();
-                if (p2 !== undefined) {{
-                    p2.then(_ => {{
-                        btn.style.display = 'none'; 
-                        status.innerHTML = "Audio speelt...";
-                        speech.onended = function() {{
-                            if(music) {{
-                                var fadeIn = setInterval(function() {{
-                                    if (music.volume < vol) {{ music.volume += 0.05; }} 
-                                    else {{ music.volume = vol; clearInterval(fadeIn); }}
-                                }}, 100);
-                            }}
-                            status.innerHTML = "";
-                        }};
-                    }}).catch(error => {{
-                        if(!isManual) {{
-                            btn.style.display = 'inline-block';
-                            status.innerHTML = "Tik op de knop (iOS)";
-                        }}
-                    }});
-                }}
-            }}, 300);
-        }}
-    }}
-    playSequence(false);
-}})();
-</script>
-"""
-    return html
-
-# ----------------------------------------------------------------------
-# 3️⃣ TEKST LOGICA
+# 2️⃣ TEKST LOGICA
 # ----------------------------------------------------------------------
 
 def clean_text_for_speech(text):
@@ -214,7 +106,7 @@ def make_question_audio(row):
     return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
-# 4️⃣ CACHED DATA & TTS (V58)
+# 3️⃣ CACHED DATA & TTS (DIAGNOSTIC MODE)
 # ----------------------------------------------------------------------
 
 @st.cache_data
@@ -226,51 +118,47 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
-# Async helper die we synchroon gaan aanroepen
+# Async worker
 async def _generate_worker(text, voice, output_file):
     comm = edge_tts.Communicate(text, voice)
     await comm.save(output_file)
 
 @st.cache_data(show_spinner=False)
-def generate_audio_file(text, voice_key="Fenna (Vrouw - Standaard)"):
-    if not TTS_AVAILABLE:
-        st.error("⚠️ Library 'edge-tts' of 'nest_asyncio' niet geladen.")
+def generate_audio_bytes(text, voice_key="Fenna (Vrouw - Standaard)"):
+    """
+    Genereert audio bytes. Geeft None terug als het mislukt.
+    """
+    if not TTS_AVAILABLE: 
         return None
-    if not text:
-        return None
+    
+    if not text: return None
     
     voice = VOICE_OPTIONS.get(voice_key, "nl-NL-FennaNeural")
     
-    # Maak temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
         output_file = f.name
     
     try:
-        # POGING 1: Directe asyncio run (mogelijk gemaakt door nest_asyncio)
         asyncio.run(_generate_worker(text, voice, output_file))
         
-        # CONTROLE: Bestaat bestand en is het groter dan 0 bytes?
         if os.path.exists(output_file):
             size = os.path.getsize(output_file)
-            if size > 0:
+            if size > 100: # Een bestand kleiner dan 100 bytes is zeker geen audio
                 with open(output_file, "rb") as f:
                     data = f.read()
                 os.remove(output_file)
-                return base64.b64encode(data).decode()
+                return data
             else:
-                st.error(f"⚠️ Audiobestand is leeg (0 bytes).")
-                return None
+                return None # Bestand te klein (corrupt)
         else:
-            st.error("⚠️ Audiobestand kon niet worden weggeschreven.")
             return None
             
     except Exception as e:
-        st.error(f"⚠️ TTS Exception: {str(e)}")
         if os.path.exists(output_file): os.remove(output_file)
         return None
 
 # ----------------------------------------------------------------------
-# 5️⃣ OPSLAG & STATE
+# 4️⃣ OPSLAG & STATE
 # ----------------------------------------------------------------------
 
 def load_history():
@@ -302,7 +190,7 @@ if 'voice_feedback' not in st.session_state: st.session_state.voice_feedback = "
 if 'practice_ids' not in st.session_state: st.session_state.practice_ids = []
 
 # ----------------------------------------------------------------------
-# 6️⃣ UI & CSS
+# 5️⃣ UI & CSS
 # ----------------------------------------------------------------------
 
 def inject_custom_css():
@@ -358,6 +246,22 @@ div[data-baseweb="select"] span {{ color: {text_color} !important; }}
 # ----------------------------------------------------------------------
 # 7️⃣ SCHERMEN
 # ----------------------------------------------------------------------
+
+def render_sidebar():
+    with st.sidebar:
+        st.header("🔧 Systeem Diagnose")
+        if st.button("🔊 Test Audio Systeem"):
+            with st.spinner("Test audio genereren..."):
+                # Test audio met huidige tijd om caching te voorkomen
+                test_text = f"Hallo Eva, dit is een testbericht om te kijken of het geluid werkt. Het is nu {datetime.now().strftime('%H:%M')}."
+                data = generate_audio_bytes(test_text, st.session_state.voice_question)
+                
+                if data:
+                    st.success(f"✅ Audio gegenereerd!")
+                    st.info(f"Bestandsgrootte: {len(data)} bytes")
+                    st.audio(data, format='audio/mp3', start_time=0)
+                else:
+                    st.error("❌ Audio generatie mislukt. Check logs.")
 
 def render_navbar():
     c1, c2, c3 = st.columns([1, 4, 1])
@@ -457,13 +361,12 @@ Road to License ✨<br>
         st.session_state.voice_feedback = st.selectbox("Feedback stem:", list(VOICE_OPTIONS.keys()), index=1)
 
     if not st.session_state.welcome_played:
-        with st.empty():
-            # Height 70 zorgt dat de knop zichtbaar is
-            components.html(get_audio_player_html(generate_audio_file("Ha Eefje. Klaar om te knallen?", st.session_state.voice_question)), height=70)
+        # Hier ook audio checken voor welkom
+        welkom_text = "Ha Eefje. Klaar om te knallen?"
+        audio_welkom = generate_audio_bytes(welkom_text, st.session_state.voice_question)
+        if audio_welkom:
+            st.audio(audio_welkom, format='audio/mp3', start_time=0)
         st.session_state.welcome_played = True
-    else:
-        with st.empty():
-            components.html(get_audio_player_html(None), height=0)
 
 def screen_practice(df):
     if st.session_state.trigger_balloons: st.balloons(); st.session_state.trigger_balloons = False
@@ -513,10 +416,11 @@ def screen_practice(df):
 
     if not st.session_state.answered_question:
         with audio_slot:
-            audio_data_b64 = generate_audio_file(make_question_audio(row), st.session_state.voice_question)
-            components.html(get_audio_player_html(audio_data_b64), height=70)
-            if audio_data_b64:
-                st.audio(base64.b64decode(audio_data_b64), format='audio/mp3')
+            audio_bytes = generate_audio_bytes(make_question_audio(row), st.session_state.voice_question)
+            if audio_bytes:
+                st.audio(audio_bytes, format='audio/mp3', start_time=0)
+            else:
+                st.warning("⚠️ Audio kon niet worden geladen.")
 
         for opt in [row['opt1'], row['opt2'], row['opt3']]:
             if str(opt).lower() != 'nan':
@@ -535,10 +439,9 @@ def screen_practice(df):
         is_correct = (st.session_state.selected_answer == str(row['answer']))
         fb_txt = get_dad_feedback(is_correct, row['explanation'])
         with audio_slot:
-            audio_fb_b64 = generate_audio_file(fb_txt, st.session_state.voice_feedback)
-            components.html(get_audio_player_html(audio_fb_b64), height=70)
-            if audio_fb_b64:
-                st.audio(base64.b64decode(audio_fb_b64), format='audio/mp3')
+            audio_fb_bytes = generate_audio_bytes(fb_txt, st.session_state.voice_feedback)
+            if audio_fb_bytes:
+                st.audio(audio_fb_bytes, format='audio/mp3', start_time=0)
 
         if is_correct:
             st.success(f"✅ {fb_txt}")
@@ -573,10 +476,9 @@ def screen_exam(df):
     st.markdown(f"<div class='question-content'>{row['question']}</div>", unsafe_allow_html=True)
     
     with st.empty():
-        audio_ex_b64 = generate_audio_file(clean_text_for_speech(row['question']), st.session_state.voice_question)
-        components.html(get_audio_player_html(audio_ex_b64), height=70)
-        if audio_ex_b64:
-            st.audio(base64.b64decode(audio_ex_b64), format='audio/mp3')
+        audio_ex_bytes = generate_audio_bytes(clean_text_for_speech(row['question']), st.session_state.voice_question)
+        if audio_ex_bytes:
+            st.audio(audio_ex_bytes, format='audio/mp3', start_time=0)
 
     for opt in [row['opt1'], row['opt2'], row['opt3']]:
         if str(opt).lower() != 'nan':
@@ -603,12 +505,11 @@ def screen_exam_result(df):
 def screen_panic():
     st.markdown("<h2 style='text-align:center;'>Adem in... Adem uit... 🌿</h2>", unsafe_allow_html=True)
     st.markdown("""<div style="display:flex; justify-content:center; align-items:center; height:200px;"><div style="width:150px; height:150px; background:#a5d6a7; border-radius:50%; animation:breathe 8s infinite ease-in-out;"></div></div><style>@keyframes breathe {0%, 100% {transform:scale(1);} 50% {transform:scale(1.5);}}</style>""", unsafe_allow_html=True)
-    with st.empty():
-        components.html(get_audio_player_html(None), height=0)
     if st.button("Ik ben weer rustig"): st.session_state.mode = 'dashboard'; st.rerun()
 
 def main():
     inject_custom_css()
+    render_sidebar() # <--- HIER ZIT DE DIAGNOSE KNOP
     df = load_data()
     if df.empty: st.error("❌ 'vragen.csv' niet gevonden!"); return
     render_navbar()
