@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V62 - GOOGLE TTS)
+📜 EVA'S THEORIE APP (V63 - AUTOPLAY & CLEANUP)
 -----------------------------------------------------
 Reparaties:
-- ENGINE SWAP: We gebruiken nu gTTS (Google Text-to-Speech).
-  Dit systeem is synchroon en werkt gegarandeerd op Streamlit Cloud.
-  Geen asyncio problemen meer.
-- ROBUUSTHEID: Dit is de meest stabiele methode voor audio.
+- AUTOPLAY: Audio start nu automatisch bij elke nieuwe vraag (st.audio autoplay=True).
+- CLEANUP: Oude stem-selecties verwijderd (gTTS ondersteunt alleen standaard stem).
+- STABILITEIT: Gebaseerd op de werkende Google Engine.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -46,7 +45,7 @@ st.set_page_config(
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
 EXAM_PASS_SCORE = 18
-APP_VERSION = "V62 (Google TTS Engine)"
+APP_VERSION = "V63 (Auto-Play)"
 
 REWARD_GIFS = [
     "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif", 
@@ -117,7 +116,7 @@ def generate_audio_bytes(text):
         output_file = f.name
     
     try:
-        # Google TTS aanroep (Simpel en robuust)
+        # Google TTS aanroep
         tts = gTTS(text=text, lang='nl')
         tts.save(output_file)
         
@@ -315,7 +314,7 @@ Road to License ✨<br>
         welkom_text = "Ha Eefje. Klaar om te knallen?"
         audio_welkom = generate_audio_bytes(welkom_text)
         if audio_welkom:
-            st.audio(audio_welkom, format='audio/mp3', start_time=0)
+            st.audio(audio_welkom, format='audio/mp3', start_time=0, autoplay=True)
         st.session_state.welcome_played = True
 
 def screen_practice(df):
@@ -367,7 +366,7 @@ def screen_practice(df):
         with audio_slot:
             audio_bytes = generate_audio_bytes(make_question_audio(row))
             if audio_bytes:
-                st.audio(audio_bytes, format='audio/mp3', start_time=0)
+                st.audio(audio_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
         for opt in [row['opt1'], row['opt2'], row['opt3']]:
             if str(opt).lower() != 'nan':
@@ -388,7 +387,7 @@ def screen_practice(df):
         with audio_slot:
             audio_fb_bytes = generate_audio_bytes(fb_txt)
             if audio_fb_bytes:
-                st.audio(audio_fb_bytes, format='audio/mp3', start_time=0)
+                st.audio(audio_fb_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
         if is_correct:
             st.success(f"✅ {fb_txt}")
@@ -425,7 +424,7 @@ def screen_exam(df):
     with st.empty():
         audio_ex_bytes = generate_audio_bytes(clean_text_for_speech(row['question']))
         if audio_ex_bytes:
-            st.audio(audio_ex_bytes, format='audio/mp3', start_time=0)
+            st.audio(audio_ex_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
     for opt in [row['opt1'], row['opt2'], row['opt3']]:
         if str(opt).lower() != 'nan':
