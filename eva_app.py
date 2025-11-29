@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V64 - SPRAAK VERBETERING)
+📜 EVA'S THEORIE APP (V66 - SESSIES & BELONINGEN)
 -----------------------------------------------------
-Reparaties:
-- CLEANER: De functie 'clean_text_for_speech' is flink uitgebreid.
-  Hij filtert nu markdown (*, _, #) weg en vertaalt afkortingen
-  zoals 'km/u' en 't/m' naar volledige zinnen voor een natuurlijkere stem.
-- ENGINE: gTTS (Google) blijft de basis voor stabiliteit.
+Nieuw in V66:
+- SESSIE LENGTE: Kies vooraf hoeveel vragen je wilt doen (5, 10, 20 of Alles).
+- VOORTGANG: Een balkje laat zien hoe ver je bent in je sessie.
+- BELONINGEN: Werken nog steeds! Bij elke 5 goede antwoorden op rij (streak) komt er een GIF.
+- EINDSCORE: Na de sessie zie je direct je resultaat.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -45,8 +45,8 @@ st.set_page_config(
 
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
+APP_VERSION = "V66 (Sessies & Beloningen)"
 EXAM_PASS_SCORE = 18
-APP_VERSION = "V64 (Spraak Clean-up)"
 
 REWARD_GIFS = [
     "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif", 
@@ -58,42 +58,19 @@ REWARD_GIFS = [
 ]
 
 # ----------------------------------------------------------------------
-# 2️⃣ TEKST LOGICA (VERBETERD)
+# 2️⃣ TEKST LOGICA
 # ----------------------------------------------------------------------
 
 def clean_text_for_speech(text):
-    """
-    Maakt de tekst schoon zodat de Google stem niet struikelt over
-    leestekens, markdown of afkortingen.
-    """
     if not text: return ""
-    
-    # 1. Verwijder Markdown tekens (*, _, #, `, [], ()) die niet uitgesproken moeten worden
-    # We vervangen ze door een spatie of niks, afhankelijk van de context
-    clean = re.sub(r'[\*\_#`\[\]]', '', text) 
-    
-    # 2. Vervang specifieke verkeers-afkortingen en tekens
+    clean = re.sub(r'[\*\_#`]', '', text)
+    clean = clean.replace(';', ',').replace(':', ',')
     clean = clean.replace("km/u", "kilometer per uur")
-    clean = clean.replace("t/m", "tot en met")
-    clean = clean.replace("m.u.v.", "met uitzondering van")
-    clean = clean.replace("z.s.m.", "zo snel mogelijk")
-    clean = clean.replace("&", "en")
-    
-    # 3. Vervang leestekens voor betere spreek-pauzes
-    clean = clean.replace(';', ',')
-    clean = clean.replace(':', ',')
-    clean = clean.replace("/", " of ") # Bijv: "Ja/Nee" -> "Ja of Nee"
-    
-    # 4. Zorg dat A, B, C duidelijk worden uitgesproken als opties
-    # \b betekent 'woordgrens', dus 'A' wordt vervangen, maar 'Auto' niet.
+    clean = clean.replace("/", " of ")
     clean = re.sub(r'\bA\b', 'optie A', clean)
     clean = re.sub(r'\bB\b', 'optie B', clean)
     clean = re.sub(r'\bC\b', 'optie C', clean)
-    
-    # 5. Verwijder dubbele spaties die ontstaan zijn
-    clean = re.sub(r'\s+', ' ', clean).strip()
-    
-    return clean
+    return clean.strip()
 
 def get_dad_feedback(is_correct, explanation):
     explanation = clean_text_for_speech(explanation)
@@ -107,18 +84,10 @@ def get_dad_feedback(is_correct, explanation):
 def make_question_audio(row):
     q = clean_text_for_speech(row['question'])
     if "u " in q.lower(): q = q.replace("u ", "je ").replace("U ", "je ")
-    
     opt1 = clean_text_for_speech(str(row['opt1']))
     opt2 = clean_text_for_speech(str(row['opt2']))
-    
-    # Check of optie 3 bestaat (niet leeg is)
-    opt3_raw = str(row['opt3'])
-    opt3 = ""
-    if opt3_raw.lower() != 'nan' and opt3_raw.strip() != "":
-        opt3 = clean_text_for_speech(opt3_raw)
-        return f"Vraag: {q}. Is het: {opt1}? {opt2}? Of {opt3}?"
-    else:
-        return f"Vraag: {q}. Is het: {opt1}? Of {opt2}?"
+    opt3 = clean_text_for_speech(str(row['opt3'])) if str(row['opt3']).lower() != 'nan' else ""
+    return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
 
 # ----------------------------------------------------------------------
 # 3️⃣ AUDIO ENGINE (GOOGLE TTS)
@@ -135,9 +104,6 @@ def load_data():
 
 @st.cache_data(show_spinner=False)
 def generate_audio_bytes(text):
-    """
-    Gebruikt Google Translate TTS API.
-    """
     if not TTS_AVAILABLE: return None
     if not text: return None
     
@@ -147,17 +113,14 @@ def generate_audio_bytes(text):
     try:
         tts = gTTS(text=text, lang='nl')
         tts.save(output_file)
-        
         if os.path.exists(output_file):
-            with open(output_file, "rb") as f:
-                data = f.read()
+            with open(output_file, "rb") as f: data = f.read()
             os.remove(output_file)
             return data
-        else:
-            return None
-    except Exception as e:
+    except:
         if os.path.exists(output_file): os.remove(output_file)
         return None
+    return None
 
 # ----------------------------------------------------------------------
 # 4️⃣ OPSLAG & STATE
@@ -174,6 +137,7 @@ def save_history(data):
     try: json.dump(data, open(HISTORY_FILE, 'w'))
     except: pass
 
+# Init Session State
 if 'user_data' not in st.session_state: st.session_state.user_data = load_history()
 if 'mode' not in st.session_state: st.session_state.mode = 'dashboard'
 if 'streak' not in st.session_state: st.session_state.streak = st.session_state.user_data.get('streak', 0)
@@ -187,7 +151,13 @@ if 'exam_state' not in st.session_state: st.session_state.exam_state = {}
 if 'dark_mode' not in st.session_state: st.session_state.dark_mode = False
 if 'selected_categories' not in st.session_state: 
     st.session_state.selected_categories = ["Gevaarherkenning", "Kennis", "Inzicht"]
+if 'voice_question' not in st.session_state: st.session_state.voice_question = "Fenna (Vrouw - Standaard)"
+if 'voice_feedback' not in st.session_state: st.session_state.voice_feedback = "Maarten (Man - Papa)"
 if 'practice_ids' not in st.session_state: st.session_state.practice_ids = []
+
+# Nieuwe variabelen voor sessie beheer
+if 'session_limit_setting' not in st.session_state: st.session_state.session_limit_setting = "10"
+if 'current_session_score' not in st.session_state: st.session_state.current_session_score = 0
 
 # ----------------------------------------------------------------------
 # 5️⃣ UI & CSS
@@ -305,16 +275,30 @@ Road to License ✨<br>
 """, unsafe_allow_html=True)
 
     st.write("---") 
+    
+    # --- SESSIE KIEZER ---
+    st.caption("Hoeveel vragen wil je oefenen?")
+    session_choice = st.select_slider("", options=["5", "10", "20", "Alles"], value=st.session_state.session_limit_setting)
+    st.session_state.session_limit_setting = session_choice
+    
     st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
     if st.button("Start Oefenen"):
         df = load_data()
         valid_cats = st.session_state.get('selected_categories', ["Gevaarherkenning", "Kennis", "Inzicht"])
         mask = df['category'].apply(lambda x: any(c in str(x) for c in valid_cats))
         filtered_df = df[mask]
+        
         if not filtered_df.empty:
             ids = filtered_df['id'].tolist()
             random.shuffle(ids)
+            
+            # Limiet toepassen op de lijst met IDs
+            if session_choice != "Alles":
+                limit = int(session_choice)
+                ids = ids[:limit]
+            
             st.session_state.practice_ids = ids
+            st.session_state.current_session_score = 0
             st.session_state.mode = 'practice'
             st.session_state.current_index = 0
             st.session_state.answered_question = False
@@ -334,6 +318,11 @@ Road to License ✨<br>
         st.caption("Mix & Match Oefenen")
         cats = ["Gevaarherkenning", "Kennis", "Inzicht"]
         st.session_state.selected_categories = st.multiselect("Selecteer categorieën:", cats, default=st.session_state.selected_categories)
+        # Diagnosetest
+        if st.button("🔊 Test Audio"):
+             data = generate_audio_bytes("Test 1 2 3.")
+             if data: st.audio(data, format="audio/mp3")
+             else: st.error("Audio motor niet beschikbaar.")
     
     st.caption(f"App Versie: {APP_VERSION} | © 2025 Papa & Eva")
 
@@ -348,21 +337,34 @@ def screen_practice(df):
     if st.session_state.trigger_balloons: st.balloons(); st.session_state.trigger_balloons = False
     is_mistakes = (st.session_state.mode == 'mistakes')
     
+    # ID Lijst ophalen
     if is_mistakes:
         q_ids = st.session_state.user_data['mistakes_list']
+        # Filter ongeldige IDs eruit
         valid_q_ids = [qid for qid in q_ids if not df[df['id'] == str(qid)].empty]
         if not valid_q_ids: 
             st.success("Foutenbak leeg! 🎉"); st.button("Terug", on_click=lambda: setattr(st.session_state, 'mode', 'dashboard')); return
-        if st.session_state.current_index >= len(valid_q_ids): st.session_state.current_index = 0
-        current_id = valid_q_ids[st.session_state.current_index]
+        practice_list = valid_q_ids
     else:
-        if 'practice_ids' not in st.session_state or not st.session_state.practice_ids:
-             st.warning("Geen vragen geladen."); st.button("Terug", on_click=lambda: setattr(st.session_state, 'mode', 'dashboard')); return
-        if st.session_state.current_index >= len(st.session_state.practice_ids): 
-            st.balloons(); st.success("Klaar!"); st.button("Terug", on_click=lambda: setattr(st.session_state, 'mode', 'dashboard')); return
-        current_id = st.session_state.practice_ids[st.session_state.current_index]
+        practice_list = st.session_state.practice_ids
 
+    # Check of we klaar zijn
+    if st.session_state.current_index >= len(practice_list):
+        # Sessie is klaar, toon resultaat
+        screen_session_done(len(practice_list))
+        return
+
+    current_id = practice_list[st.session_state.current_index]
     row = df[df['id'] == str(current_id)].iloc[0]
+    
+    # Voortgangsbalk en teller
+    total_q = len(practice_list)
+    curr_q = st.session_state.current_index + 1
+    progress = curr_q / total_q
+    
+    st.markdown(f"**Vraag {curr_q} van {total_q}**")
+    st.progress(progress)
+
     img_prompt = urllib.parse.quote(row.get('image_desc', 'traffic situation car netherlands'))
     ai_img_url = f"https://image.pollinations.ai/prompt/driver%20view%20inside%20car%20{img_prompt}?width=600&height=400&nologo=true"
     card_bg = '#121212' if st.session_state.dark_mode else '#ffffff'
@@ -401,13 +403,23 @@ def screen_practice(df):
                     st.session_state.answered_question = True
                     st.session_state.selected_answer = str(opt)
                     data = st.session_state.user_data
+                    
                     if str(opt) == str(row['answer']):
-                        data['total_score'] += 1; st.session_state.streak += 1; st.session_state.trigger_balloons = True
-                        if is_mistakes and str(current_id) in data['mistakes_list']: data['mistakes_list'].remove(str(current_id))
+                        # GOED ANTWOORD
+                        data['total_score'] += 1
+                        st.session_state.streak += 1
+                        st.session_state.current_session_score += 1
+                        st.session_state.trigger_balloons = True
+                        if is_mistakes and str(current_id) in data['mistakes_list']: 
+                            data['mistakes_list'].remove(str(current_id))
                     else:
+                        # FOUT ANTWOORD
                         st.session_state.streak = 0
-                        if str(current_id) not in data['mistakes_list']: data['mistakes_list'].append(str(current_id))
-                    save_history(data); st.rerun()
+                        if str(current_id) not in data['mistakes_list']: 
+                            data['mistakes_list'].append(str(current_id))
+                    
+                    save_history(data)
+                    st.rerun()
     else:
         is_correct = (st.session_state.selected_answer == str(row['answer']))
         fb_txt = get_dad_feedback(is_correct, row['explanation'])
@@ -418,16 +430,53 @@ def screen_practice(df):
 
         if is_correct:
             st.success(f"✅ {fb_txt}")
+            # --- BELONING SYSTEEM ---
             if st.session_state.streak > 0 and st.session_state.streak % 5 == 0:
-                st.markdown(f"<div class='reward-overlay'><h2>🔥 5 OP EEN RIJ!</h2><img src='{random.choice(REWARD_GIFS)}' width='100%'></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='reward-overlay'><h2>🔥 {st.session_state.streak} OP EEN RIJ!</h2><img src='{random.choice(REWARD_GIFS)}' width='100%'></div>", unsafe_allow_html=True)
+                st.balloons()
         else:
             st.error(f"❌ {fb_txt}"); st.info(f"Antwoord: {row['answer']}")
+        
         st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
         if st.button("Volgende ➡️"):
             st.session_state.answered_question = False
-            if not is_mistakes or not is_correct: st.session_state.current_index += 1
+            # Als we in de foutenbak modus zitten en het was goed, is de vraag nu weg uit de lijst
+            # Dus we hoeven de index niet te verhogen als de lijst korter is geworden
+            # Tenzij het antwoord fout was, dan blijft hij staan.
+            # Simpelste logica: Altijd volgende index in gewone modus.
+            if not is_mistakes:
+                st.session_state.current_index += 1
+            else:
+                # In foutenbak: als goed, is item weg, dus index wijst al naar volgende.
+                # Als fout, item blijft, dus index verhogen om volgende te pakken.
+                if not is_correct:
+                    st.session_state.current_index += 1
+                    
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
+
+def screen_session_done(total_questions):
+    score = st.session_state.current_session_score
+    st.markdown(f"""
+    <div class="insta-card" style="text-align:center; padding: 40px;">
+        <h1>Sessie Klaar! 🎉</h1>
+        <h3>Je score: {score} van de {total_questions}</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if score == total_questions:
+        st.balloons()
+        st.success("Foutloos! Wat een baas. 🏆")
+    elif score > total_questions / 2:
+        st.info("Lekker bezig! Op naar de 100%.")
+    else:
+        st.warning("Oefening baart kunst. Nog een keertje?")
+
+    st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
+    if st.button("Terug naar Dashboard"):
+        st.session_state.mode = 'dashboard'
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def init_exam(df):
     q_pool = random.sample(df['id'].tolist(), min(len(df), 25))
