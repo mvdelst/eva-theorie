@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V67 - CBR TIMER)
+📜 EVA'S THEORIE APP (V68 - SMART TIMING)
 -----------------------------------------------------
-Nieuw in V67:
-- CBR TIMER: Een blauwe balk die afloopt (CSS animatie).
-- TIJDSLIMIETEN: 8 seconden voor Gevaarherkenning, 15 voor de rest.
-- TE LAAT LOGICA: Antwoorden na de tijdslimiet tellen als fout.
-- FUNCTIONALITEIT: Audio, Beloningen en Sessies blijven werken.
+Nieuw in V68:
+- EERLIJKE START: De timer (blauwe balk) begint pas te lopen NADAT de vraag is uitgesproken.
+- AUDIO DELAY: We berekenen hoe lang de zin duurt en zetten een 'animation-delay' op de balk.
+- BACKEND SYNC: De 'Te Laat' check houdt nu ook rekening met de spreektijd.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -45,7 +44,7 @@ st.set_page_config(
 
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
-APP_VERSION = "V67 (CBR Timer)"
+APP_VERSION = "V68 (Smart Audio Timer)"
 EXAM_PASS_SCORE = 18
 
 REWARD_GIFS = [
@@ -58,7 +57,7 @@ REWARD_GIFS = [
 ]
 
 # ----------------------------------------------------------------------
-# 2️⃣ TEKST LOGICA
+# 2️⃣ TEKST & TIMING LOGICA
 # ----------------------------------------------------------------------
 
 def clean_text_for_speech(text):
@@ -72,11 +71,22 @@ def clean_text_for_speech(text):
     clean = re.sub(r'\bC\b', 'optie C', clean)
     return clean.strip()
 
+def estimate_speech_duration(text):
+    """
+    Schatting: Een gemiddelde stem spreekt ongeveer 2.5 woorden per seconde.
+    We voegen 1 seconde buffer toe voor het laden.
+    """
+    if not text: return 0
+    words = len(text.split())
+    # 0.45 sec per woord is een goed gemiddelde voor rustige spraak
+    duration = (words * 0.45) + 1.5 
+    return round(duration, 1)
+
 def get_dad_feedback(is_correct, explanation, is_too_late=False):
     explanation = clean_text_for_speech(explanation)
     
     if is_too_late:
-        return f"Te laat! Je moet sneller beslissen Eef. In het verkeer telt elke seconde. {explanation}"
+        return f"Te laat! Je moet sneller beslissen Eef. De tijd ging in ná de vraag. {explanation}"
 
     if is_correct:
         intros = ["Kijk, dat is mijn dochter! Goed.", "Lekker bezig Eef!", "Hoppa! In the pocket.", "Zie je wel dat je het kan? 😉", "De poesjes zijn trots!", "Gas erop Eef, dit is goed!", "Keurig."]
@@ -158,10 +168,11 @@ if 'practice_ids' not in st.session_state: st.session_state.practice_ids = []
 if 'session_limit_setting' not in st.session_state: st.session_state.session_limit_setting = "10"
 if 'current_session_score' not in st.session_state: st.session_state.current_session_score = 0
 if 'question_start_time' not in st.session_state: st.session_state.question_start_time = 0
+if 'audio_duration_cache' not in st.session_state: st.session_state.audio_duration_cache = 0
 if 'is_too_late' not in st.session_state: st.session_state.is_too_late = False
 
 # ----------------------------------------------------------------------
-# 5️⃣ UI & CSS (INCL. TIMER ANIMATION)
+# 5️⃣ UI & CSS (INCL. SMART TIMER)
 # ----------------------------------------------------------------------
 
 def inject_custom_css():
@@ -229,12 +240,14 @@ def render_navbar():
             st.session_state.dark_mode = not st.session_state.dark_mode
             st.rerun()
 
-def get_timer_html(seconds):
-    """Genereert de HTML voor de aftelbalk."""
-    # We gebruiken een keyframe animatie die precies 'seconds' duurt
+def get_timer_html(seconds, delay_seconds):
+    """
+    Genereert de HTML voor de aftelbalk met een wacht-tijd (delay).
+    De animatie begint pas na 'delay_seconds'.
+    """
     return f"""
     <div class="timer-container">
-        <div class="timer-bar" style="animation: countdown {seconds}s linear forwards;"></div>
+        <div class="timer-bar" style="animation: countdown {seconds}s linear forwards; animation-delay: {delay_seconds}s;"></div>
     </div>
     <style>
     @keyframes countdown {{
@@ -311,8 +324,8 @@ Road to License ✨<br>
             st.session_state.mode = 'practice'
             st.session_state.current_index = 0
             st.session_state.answered_question = False
-            # Reset timer start bij start sessie (wordt gezet per vraag)
             st.session_state.question_start_time = 0
+            st.session_state.audio_duration_cache = 0 # Reset audio cache
             st.rerun()
         else:
             st.error("Geen vragen gevonden!")
@@ -363,15 +376,22 @@ def screen_practice(df):
     current_id = practice_list[st.session_state.current_index]
     row = df[df['id'] == str(current_id)].iloc[0]
     
-    # Bepaal timer (8s voor gevaar, 15s voor rest)
+    # 1. Bepaal tekst voor audio en bereken duur
+    question_text = make_question_audio(row)
+    
+    # 2. Bereken/Haal audio duur op (als we dat nog niet gedaan hadden voor deze vraag)
+    if not st.session_state.answered_question and st.session_state.question_start_time == 0:
+        duration = estimate_speech_duration(question_text)
+        st.session_state.audio_duration_cache = duration
+        st.session_state.question_start_time = time.time()
+
+    # 3. Timer instellingen
     try:
         timer_seconds = int(row.get('timer', 15))
     except:
         timer_seconds = 15
-
-    # Start tijd zetten als de vraag nieuw is
-    if not st.session_state.answered_question and st.session_state.question_start_time == 0:
-        st.session_state.question_start_time = time.time()
+    
+    audio_delay = st.session_state.audio_duration_cache
 
     # Progress bar voor sessie
     total_q = len(practice_list)
@@ -380,9 +400,10 @@ def screen_practice(df):
     st.markdown(f"**Vraag {curr_q} van {total_q}**")
     st.progress(progress)
 
-    # --- HIER IS DE BLAUWE BALK ---
+    # --- HIER IS DE BLAUWE BALK MET VERTRAGING ---
     if not st.session_state.answered_question:
-        st.markdown(get_timer_html(timer_seconds), unsafe_allow_html=True)
+        # We geven de audio_delay mee aan de HTML
+        st.markdown(get_timer_html(timer_seconds, audio_delay), unsafe_allow_html=True)
     # ------------------------------
 
     img_prompt = urllib.parse.quote(row.get('image_desc', 'traffic situation car netherlands'))
@@ -413,7 +434,7 @@ def screen_practice(df):
 
     if not st.session_state.answered_question:
         with audio_slot:
-            audio_bytes = generate_audio_bytes(make_question_audio(row))
+            audio_bytes = generate_audio_bytes(question_text)
             if audio_bytes:
                 st.audio(audio_bytes, format='audio/mp3', start_time=0, autoplay=True)
 
@@ -421,20 +442,24 @@ def screen_practice(df):
             if str(opt).lower() != 'nan':
                 if st.button(str(opt), key=f"btn_{current_id}_{opt}"):
                     # Check de tijd!
-                    elapsed = time.time() - st.session_state.question_start_time
-                    is_too_late = elapsed > timer_seconds
+                    # Tijd die voorbij is sinds renderen
+                    elapsed_total = time.time() - st.session_state.question_start_time
+                    # De "denktijd" is de totale tijd MIN de tijd dat de audio sprak
+                    thinking_time = elapsed_total - audio_delay
+                    
+                    # Als thinking_time < 0 is, betekent dat dat ze antwoordde TERWIJL de audio nog sprak
+                    # Dat is natuurlijk prima en telt niet als te laat.
+                    is_too_late = thinking_time > timer_seconds
                     
                     st.session_state.answered_question = True
                     st.session_state.selected_answer = str(opt)
-                    st.session_state.is_too_late = is_too_late # Opslaan voor feedback
+                    st.session_state.is_too_late = is_too_late 
                     
                     data = st.session_state.user_data
                     
-                    # Logic: Goed = Goed Antwoord EN Binnen de tijd
                     is_correct_answer = (str(opt) == str(row['answer']))
                     
                     if is_correct_answer and not is_too_late:
-                        # ECHT GOED
                         data['total_score'] += 1
                         st.session_state.streak += 1
                         st.session_state.current_session_score += 1
@@ -442,7 +467,6 @@ def screen_practice(df):
                         if is_mistakes and str(current_id) in data['mistakes_list']: 
                             data['mistakes_list'].remove(str(current_id))
                     else:
-                        # FOUT (Of te laat)
                         st.session_state.streak = 0
                         if str(current_id) not in data['mistakes_list']: 
                             data['mistakes_list'].append(str(current_id))
@@ -454,7 +478,6 @@ def screen_practice(df):
         is_correct_answer = (st.session_state.selected_answer == str(row['answer']))
         is_too_late = st.session_state.is_too_late
         
-        # Feedback ophalen (Papa zegt nu ook als je te laat bent)
         fb_txt = get_dad_feedback(is_correct_answer, row['explanation'], is_too_late)
         
         with audio_slot:
@@ -477,14 +500,13 @@ def screen_practice(df):
         st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
         if st.button("Volgende ➡️"):
             st.session_state.answered_question = False
-            st.session_state.question_start_time = 0 # Reset timer voor volgende vraag
+            st.session_state.question_start_time = 0 
+            st.session_state.audio_duration_cache = 0
             st.session_state.is_too_late = False
             
             if not is_mistakes:
                 st.session_state.current_index += 1
             else:
-                # In foutenbak: als goed, is item weg, dus index wijst al naar volgende.
-                # Als fout, item blijft, dus index verhogen om volgende te pakken.
                 if not (is_correct_answer and not is_too_late):
                     st.session_state.current_index += 1
                     
