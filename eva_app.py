@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-📜 EVA'S THEORIE APP (V63 - AUTOPLAY & CLEANUP)
+📜 EVA'S THEORIE APP (V64 - SPRAAK VERBETERING)
 -----------------------------------------------------
 Reparaties:
-- AUTOPLAY: Audio start nu automatisch bij elke nieuwe vraag (st.audio autoplay=True).
-- CLEANUP: Oude stem-selecties verwijderd (gTTS ondersteunt alleen standaard stem).
-- STABILITEIT: Gebaseerd op de werkende Google Engine.
+- CLEANER: De functie 'clean_text_for_speech' is flink uitgebreid.
+  Hij filtert nu markdown (*, _, #) weg en vertaalt afkortingen
+  zoals 'km/u' en 't/m' naar volledige zinnen voor een natuurlijkere stem.
+- ENGINE: gTTS (Google) blijft de basis voor stabiliteit.
 
 Gebruik:
 Start via terminal: streamlit run eva_app.py
@@ -45,7 +46,7 @@ st.set_page_config(
 # --- CONSTANTEN ---
 HISTORY_FILE = "progress.json"
 EXAM_PASS_SCORE = 18
-APP_VERSION = "V63 (Auto-Play)"
+APP_VERSION = "V64 (Spraak Clean-up)"
 
 REWARD_GIFS = [
     "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif", 
@@ -57,19 +58,42 @@ REWARD_GIFS = [
 ]
 
 # ----------------------------------------------------------------------
-# 2️⃣ TEKST LOGICA
+# 2️⃣ TEKST LOGICA (VERBETERD)
 # ----------------------------------------------------------------------
 
 def clean_text_for_speech(text):
+    """
+    Maakt de tekst schoon zodat de Google stem niet struikelt over
+    leestekens, markdown of afkortingen.
+    """
     if not text: return ""
-    clean = re.sub(r'[\*\_#`]', '', text)
-    clean = clean.replace(';', ',').replace(':', ',')
+    
+    # 1. Verwijder Markdown tekens (*, _, #, `, [], ()) die niet uitgesproken moeten worden
+    # We vervangen ze door een spatie of niks, afhankelijk van de context
+    clean = re.sub(r'[\*\_#`\[\]]', '', text) 
+    
+    # 2. Vervang specifieke verkeers-afkortingen en tekens
     clean = clean.replace("km/u", "kilometer per uur")
-    clean = clean.replace("/", " of ")
+    clean = clean.replace("t/m", "tot en met")
+    clean = clean.replace("m.u.v.", "met uitzondering van")
+    clean = clean.replace("z.s.m.", "zo snel mogelijk")
+    clean = clean.replace("&", "en")
+    
+    # 3. Vervang leestekens voor betere spreek-pauzes
+    clean = clean.replace(';', ',')
+    clean = clean.replace(':', ',')
+    clean = clean.replace("/", " of ") # Bijv: "Ja/Nee" -> "Ja of Nee"
+    
+    # 4. Zorg dat A, B, C duidelijk worden uitgesproken als opties
+    # \b betekent 'woordgrens', dus 'A' wordt vervangen, maar 'Auto' niet.
     clean = re.sub(r'\bA\b', 'optie A', clean)
     clean = re.sub(r'\bB\b', 'optie B', clean)
     clean = re.sub(r'\bC\b', 'optie C', clean)
-    return clean.strip()
+    
+    # 5. Verwijder dubbele spaties die ontstaan zijn
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    
+    return clean
 
 def get_dad_feedback(is_correct, explanation):
     explanation = clean_text_for_speech(explanation)
@@ -83,10 +107,18 @@ def get_dad_feedback(is_correct, explanation):
 def make_question_audio(row):
     q = clean_text_for_speech(row['question'])
     if "u " in q.lower(): q = q.replace("u ", "je ").replace("U ", "je ")
+    
     opt1 = clean_text_for_speech(str(row['opt1']))
     opt2 = clean_text_for_speech(str(row['opt2']))
-    opt3 = clean_text_for_speech(str(row['opt3'])) if str(row['opt3']).lower() != 'nan' else ""
-    return f"Vraag: {q}. Is het: {opt1}? {opt2}? {opt3}"
+    
+    # Check of optie 3 bestaat (niet leeg is)
+    opt3_raw = str(row['opt3'])
+    opt3 = ""
+    if opt3_raw.lower() != 'nan' and opt3_raw.strip() != "":
+        opt3 = clean_text_for_speech(opt3_raw)
+        return f"Vraag: {q}. Is het: {opt1}? {opt2}? Of {opt3}?"
+    else:
+        return f"Vraag: {q}. Is het: {opt1}? Of {opt2}?"
 
 # ----------------------------------------------------------------------
 # 3️⃣ AUDIO ENGINE (GOOGLE TTS)
@@ -104,19 +136,15 @@ def load_data():
 @st.cache_data(show_spinner=False)
 def generate_audio_bytes(text):
     """
-    Gebruikt Google Translate TTS API. Werkt synchroon en altijd.
+    Gebruikt Google Translate TTS API.
     """
-    if not TTS_AVAILABLE:
-        return None
-    
+    if not TTS_AVAILABLE: return None
     if not text: return None
     
-    # Tijdelijk bestand
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
         output_file = f.name
     
     try:
-        # Google TTS aanroep
         tts = gTTS(text=text, lang='nl')
         tts.save(output_file)
         
@@ -127,7 +155,6 @@ def generate_audio_bytes(text):
             return data
         else:
             return None
-            
     except Exception as e:
         if os.path.exists(output_file): os.remove(output_file)
         return None
